@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: true }),
     supabase
       .from("payments")
-      .select("booking_id, status, provider_ref, created_at")
+      .select("booking_id, status, provider_ref, reconciliation_status, created_at")
       .in("booking_id", bookingIds)
       .order("created_at", { ascending: false }),
   ]);
@@ -130,6 +130,7 @@ export async function GET(req: NextRequest) {
       paymentDeadline: booking.payment_deadline,
       paymentStatus: payment?.status ?? "pending",
       paymentProviderRef: payment?.provider_ref ?? null,
+      paymentReconciliationStatus: payment?.reconciliation_status ?? "none",
       customer: {
         fullName: customer.full_name,
         phone: customer.phone,

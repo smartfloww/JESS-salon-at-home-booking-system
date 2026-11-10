@@ -48,5 +48,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     return NextResponse.json({ error: "Booking could not be cancelled." }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, status: "cancelled" });
+  return NextResponse.json({
+    ok: true,
+    status: "cancelled",
+    refundRequired: result.refund_required === true,
+  });
 }

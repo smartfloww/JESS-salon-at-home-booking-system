@@ -12,10 +12,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/db";
 import { isMockMode } from "@/lib/payrex";
+import { requireAdmin } from "@/lib/auth";
+import { canCompleteMockPayment, isMockPaymentEndpointAvailable } from "@/lib/mock-payment-access";
 
 export async function POST(req: NextRequest) {
-  if (!isMockMode()) {
+  const mockMode = isMockMode();
+  if (!isMockPaymentEndpointAvailable(process.env.NODE_ENV, mockMode)) {
     return NextResponse.json({ error: "Mock mode is disabled." }, { status: 403 });
+  }
+  const admin = await requireAdmin();
+  if (!canCompleteMockPayment(process.env.NODE_ENV, mockMode, Boolean(admin))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let body: { reference?: string };

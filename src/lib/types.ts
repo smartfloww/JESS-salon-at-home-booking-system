@@ -104,6 +104,15 @@ export interface BookingDetail {
   remainingBalance: number;
   remainingBalanceLabel: string;
   items: BookingDetailItem[];
+  paymentStatus: PaymentStatus;
+}
+
+export interface AdminBooking extends BookingDetail {
+  id: string;
+  paymentDeadline: string | null;
+  paymentProviderRef: string | null;
+  paymentReconciliationStatus: "none" | "refund_required" | "resolved";
+  createdAt: string;
   customer: {
     fullName: string;
     phone: string;
@@ -114,14 +123,6 @@ export interface BookingDetail {
     province: string;
     landmark: string | null;
   };
-  paymentStatus: PaymentStatus;
-  paymentProviderRef: string | null;
-  createdAt: string;
-}
-
-export interface AdminBooking extends BookingDetail {
-  id: string;
-  paymentDeadline: string | null;
 }
 
 export function formatPHP(centavos: number): string {

@@ -8,14 +8,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/db";
 import { formatPHP } from "@/lib/pricing";
 import { formatTime, formatDuration } from "@/lib/scheduling";
+import {
+  isValidBookingAccessToken,
+  parseBookingAccessAuthorization,
+} from "@/lib/booking-access";
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ ref: string }> }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ ref: string }> }) {
   const { ref } = await ctx.params;
+  const accessToken = parseBookingAccessAuthorization(req.headers.get("authorization"));
+  if (!accessToken) {
+    return NextResponse.json({ error: "Booking access token required." }, { status: 401 });
+  }
+
   const supabase = getSupabaseAdminClient();
   const { data: booking, error } = await supabase
     .from("bookings")
     .select(
-      "id, reference, status, cancellation_reason, appointment_date, departure_time, reserved_minutes, service_minutes, total_service_price, reservation_fee, remaining_balance, created_at, customer_id, area_id",
+      "id, reference, booking_access_token_hash, status, cancellation_reason, appointment_date, departure_time, reserved_minutes, service_minutes, total_service_price, reservation_fee, remaining_balance, area_id",
     )
     .eq("reference", ref)
     .maybeSingle();
@@ -26,13 +35,11 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ ref: strin
   if (!booking) {
     return NextResponse.json({ error: "Booking not found." }, { status: 404 });
   }
+  if (!isValidBookingAccessToken(accessToken, booking.booking_access_token_hash)) {
+    return NextResponse.json({ error: "Booking not found." }, { status: 404 });
+  }
 
-  const [customerResult, areaResult, itemsResult, paymentsResult] = await Promise.all([
-    supabase
-      .from("customers")
-      .select("full_name, phone, email, address, barangay, city, province, landmark")
-      .eq("id", booking.customer_id)
-      .maybeSingle(),
+  const [areaResult, itemsResult, paymentsResult] = await Promise.all([
     supabase
       .from("service_areas")
       .select("name, travel_minutes")
@@ -45,24 +52,18 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ ref: strin
       .order("created_at", { ascending: true }),
     supabase
       .from("payments")
-      .select("status, provider_ref, created_at")
+      .select("status, created_at")
       .eq("booking_id", booking.id)
       .order("created_at", { ascending: false }),
   ]);
-  const relatedErrors = [
-    customerResult.error,
-    areaResult.error,
-    itemsResult.error,
-    paymentsResult.error,
-  ].filter(Boolean);
+  const relatedErrors = [areaResult.error, itemsResult.error, paymentsResult.error].filter(Boolean);
   if (relatedErrors.length > 0) {
     console.error("Could not load related booking details:", relatedErrors);
     return NextResponse.json({ error: "Booking details are unavailable." }, { status: 500 });
   }
-  const customer = customerResult.data;
   const area = areaResult.data;
-  if (!customer || !area) {
-    console.error("Booking is missing its customer or service area:", booking.reference);
+  if (!area) {
+    console.error("Booking is missing its service area:", booking.reference);
     return NextResponse.json({ error: "Booking details are unavailable." }, { status: 500 });
   }
 
@@ -105,18 +106,6 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ ref: strin
       lineDurationLabel: formatDuration(it.unit_duration * it.quantity),
       unitCategory: it.unit_category,
     })),
-    customer: {
-      fullName: customer.full_name,
-      phone: customer.phone,
-      email: customer.email,
-      address: customer.address,
-      barangay: customer.barangay,
-      city: customer.city,
-      province: customer.province,
-      landmark: customer.landmark,
-    },
     paymentStatus: payments[0]?.status ?? "pending",
-    paymentProviderRef: payments[0]?.provider_ref ?? null,
-    createdAt: booking.created_at,
   });
 }

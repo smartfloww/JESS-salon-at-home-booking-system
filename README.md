@@ -84,24 +84,27 @@ full list with placeholder values.
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Public Supabase key used for Supabase Auth in the browser. |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Server-only key used by backend routes and seed scripts. Never prefix it with `NEXT_PUBLIC_`. |
 | `NEXT_PUBLIC_BASE_URL` | yes | Public base URL (no trailing slash). Used for PayRex redirect URLs. |
-| `PAYREX_SECRET_KEY` | no | PayRex **test** secret key. Leave empty to run in MOCK payment mode. |
+| `PAYREX_SECRET_KEY` | required in production | PayRex **test** secret key. In development, leaving it empty selects mock mode. |
 | `PAYREX_PUBLIC_KEY` | no | PayRex test public key (currently unused server-side; reserved for client SDK if needed). |
 | `PAYREX_WEBHOOK_SECRET` | no | PayRex webhook signing secret. Set after registering the webhook in the PayRex dashboard. |
-| `PAYMENT_MOCK_MODE` | no | `true` forces mock mode even if PayRex keys are present. Default: `true`. |
+| `PAYMENT_MOCK_MODE` | no | Development-only switch; `true` forces mock mode even if PayRex keys are present. Default: `false`. |
 
-**Mock mode** is enabled by default (`PAYMENT_MOCK_MODE=true`). In this
-mode, no real payment is processed — the booking flow simulates a PayRex
-checkout at `/book/mock-checkout` and auto-marks the reservation fee as
-paid when the customer clicks "Simulate successful payment". This lets you
-exercise the entire booking pipeline without PayRex credentials.
+Mock checkout is available only outside production and requires an
+authenticated admin session to simulate payment completion. Production never
+completes mock payments, regardless of environment configuration. For local
+development, leave `PAYREX_SECRET_KEY` empty or set `PAYMENT_MOCK_MODE=true`.
+If a confirmed payment arrives after its slot has been reassigned, the booking
+is retained as cancelled and the payment is flagged for manual refund or
+reconciliation in the admin dashboard. An admin cancellation of a paid booking
+also flags its successful payment for that process; no automatic refund is
+attempted.
 
 ---
 
 ## 4. Database
 
-The schema and database functions are defined in
-`supabase/migrations/20261110100000_initial_schema.sql`. Apply schema
-changes through versioned migrations with `supabase db push`.
+The schema and database functions are defined in the versioned SQL migrations
+under `supabase/migrations/`. Apply schema changes with `supabase db push`.
 
 ### Tables
 
@@ -146,7 +149,7 @@ server-only service-role key.
 1. Sign in to the PayRex merchant dashboard in **test mode**
    (`https://merchants.payrex.com/`).
 2. Copy your **Test Secret Key** and put it in `.env` as `PAYREX_SECRET_KEY`.
-3. Set `PAYMENT_MOCK_MODE=false` to use PayRex instead of the default
+3. Keep `PAYMENT_MOCK_MODE=false` (or unset) to use PayRex instead of
    mock checkout.
 4. Restart the dev server: `bun run dev`.
 5. Walk through `/book` — you'll be redirected to a real PayRex hosted
@@ -293,8 +296,9 @@ or any Node host without changes.
    and sandbox-ready, but no real payment was processed during this
    implementation phase. Use the `.env` `PAYREX_SECRET_KEY` +
    `PAYREX_WEBHOOK_SECRET` to enable live sandbox testing.
-2. **Mock payment mode is on by default.** Set `PAYMENT_MOCK_MODE=false`
-   and provide `PAYREX_SECRET_KEY` to switch to PayRex checkout.
+2. **Mock checkout is development-only.** Production requires
+   `PAYREX_SECRET_KEY`; mock completion also requires an authenticated admin
+   session and is disabled in production.
 3. **Haircut additional-time rule.** The brief notes that the exact
    additional time for extra haircut customers has not been finalized.
    The current rule (see `src/lib/pricing.ts → priceHaircutLine`) bills

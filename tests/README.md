@@ -18,14 +18,19 @@ bun test tests/
   reservation fee (₱500 haircut / ₱1,500 major).
 - `scheduling.test.ts` — `roundUpToHour`, `computeReservedMinutes` (with the
   brief's example table), `formatTime`, and `rawDepartureOptions`.
+- `security-hardening.test.ts` — booking access tokens, mock-payment
+  authorization rules, and PayRex webhook validation.
+- `payment-concurrency.test.ts` — runs payment/cancellation lock-order races
+  against a migrated PostgreSQL database when `SUPABASE_TEST_DATABASE_URL` and
+  `psql` are available; otherwise this test is skipped.
 
 ## What's NOT covered (deliberate)
 
 - End-to-end PayRex payment flow — requires real sandbox credentials.
-- Database integration — requires a configured Supabase project; covered by
-  manual testing through the admin dashboard and booking flow.
-- Webhook signature verification — tested manually with `curl` and a fake
-  payload.
+- Full Supabase integration — requires a configured project; the race test
+  uses the database functions but does not exercise every API/RLS path.
+- PayRex sandbox behavior — no actual payment or provider request is made by
+  these tests.
 
 Add `bun:test` to your devDependencies if it isn't already:
 ```bash

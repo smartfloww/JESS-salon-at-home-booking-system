@@ -1220,10 +1220,21 @@ export default function BookPage() {
         setSubmitting(false);
         return;
       }
+      if (typeof data.bookingAccessToken !== "string") {
+        throw new Error("Secure booking access could not be saved.");
+      }
+      window.sessionStorage.setItem(
+        `booking-access:${data.reference}`,
+        data.bookingAccessToken,
+      );
       // Success — redirect to checkout (real PayRex or mock checkout).
       window.location.href = data.checkoutUrl;
-    } catch {
-      toast.error("Something went wrong. Please try again.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error && error.message === "Secure booking access could not be saved."
+          ? "Your booking was created, but secure access could not be saved. Please contact JESS and quote your booking reference."
+          : "Something went wrong. Please try again.",
+      );
       setSubmitting(false);
     }
   };

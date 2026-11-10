@@ -14,7 +14,8 @@
  *      PayRex API to create a Checkout Session, and we verify webhook
  *      signatures using PAYREX_WEBHOOK_SECRET.
  *
- *   2. MOCK MODE — when PAYREX_SECRET_KEY is empty OR PAYMENT_MOCK_MODE=true.
+ *   2. MOCK MODE — local development only, when PAYREX_SECRET_KEY is empty
+ *      OR PAYMENT_MOCK_MODE=true. Production always requires a real key.
  *      No real payment is processed; we synthesise a fake hosted-checkout URL
  *      on the local domain and auto-mark the payment successful after a short
  *      delay. This lets the booking flow be exercised end-to-end without
@@ -26,6 +27,7 @@ import crypto from "crypto";
 export const PAYREX_API_BASE = "https://api-test.payrex.com/v1";
 
 export function isMockMode(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
   if (process.env.PAYMENT_MOCK_MODE === "true") return true;
   return !process.env.PAYREX_SECRET_KEY;
 }
@@ -59,13 +61,16 @@ export async function createCheckoutSession(
   input: PayRexCheckoutInput,
 ): Promise<PayRexCheckoutResult> {
   if (isMockMode()) {
-    const sessionId = "mock-" + crypto.randomBytes(8).toString("hex");
+    const sessionId = "mock-" + crypto.randomBytes(32).toString("hex");
     const base = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
     const url = `${base}/book/mock-checkout?session=${sessionId}`;
     return { checkoutUrl: url, sessionId, mock: true };
   }
 
-  const secret = process.env.PAYREX_SECRET_KEY!;
+  const secret = process.env.PAYREX_SECRET_KEY;
+  if (!secret) {
+    throw new Error("PAYREX_SECRET_KEY is required when mock mode is disabled.");
+  }
   const auth = Buffer.from(`${secret}:`).toString("base64");
 
   // PayRex Checkout Session payload.
@@ -121,16 +126,13 @@ export async function createCheckoutSession(
  * PayRex signs webhooks with HMAC-SHA256 using the webhook signing secret.
  * The header is typically `Payrex-Signature` and contains a hex digest.
  *
- * If we are in MOCK mode (no real webhook secret configured) we accept any
- * request that originates from our own server-side mock-succeed call.
+ * Mock payments are confirmed directly by the guarded mock-payment route. A
+ * webhook without a configured signing secret is never trusted.
  */
 export function verifyWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
   const secret = process.env.PAYREX_WEBHOOK_SECRET;
   if (!secret || secret === "your_webhook_secret_here") {
-    // Mock mode: accept if a special internal header is present (used by the
-    // mock-succeed endpoint). Real webhooks cannot reach this branch because
-    // they would never be sent without a registered signing secret.
-    return signatureHeader === "mock-internal";
+    return false;
   }
   if (!signatureHeader) return false;
 

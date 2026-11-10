@@ -44,6 +44,7 @@ import {
   WORK_END_MIN,
 } from "@/lib/scheduling";
 import { createCheckoutSession, isMockMode } from "@/lib/payrex";
+import { createBookingAccessToken } from "@/lib/booking-access";
 
 const PAYMENT_DEADLINE_MINUTES = 10;
 
@@ -172,6 +173,7 @@ export async function POST(req: NextRequest) {
 
   // ---- create the booking inside a transaction ----
   const reference = generateBookingReference();
+  const bookingAccess = createBookingAccessToken();
   const now = new Date();
   const paymentDeadline = new Date(now.getTime() + PAYMENT_DEADLINE_MINUTES * 60_000);
   const supabase = getSupabaseAdminClient();
@@ -208,6 +210,7 @@ export async function POST(req: NextRequest) {
       },
       p_booking: {
         reference,
+        access_token_hash: bookingAccess.hash,
         area_id: area.id,
         appointment_date: body.appointmentDate,
         departure_time: body.departureTime,
@@ -246,9 +249,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       reference: booking.reference,
-      bookingId: booking.id,
+      bookingAccessToken: bookingAccess.token,
       checkoutUrl: checkout.checkoutUrl,
-      sessionId: checkout.sessionId,
       mock: isMockMode(),
       reservationFee: breakdown.reservationFee,
       paymentDeadline: paymentDeadline.toISOString(),

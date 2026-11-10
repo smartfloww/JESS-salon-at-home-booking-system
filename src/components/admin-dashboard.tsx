@@ -35,12 +35,13 @@ import {
   type PaymentStatus,
 } from "@/lib/types";
 
-type Tab = "pending_payment" | "paid" | "completed";
+type Tab = "pending_payment" | "paid" | "completed" | "cancelled";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "pending_payment", label: "Pending" },
   { id: "paid", label: "Paid" },
   { id: "completed", label: "Completed" },
+  { id: "cancelled", label: "Cancelled" },
 ];
 
 function formatDate(iso: string): string {
@@ -167,6 +168,11 @@ function BookingCard({
               Payment status: <PaymentPill status={b.paymentStatus} />
             </p>
             {b.paymentProviderRef ? <p>Provider ref: {b.paymentProviderRef}</p> : null}
+            {b.paymentReconciliationStatus === "refund_required" ? (
+              <p role="alert" className="combo-warning">
+                Payment requires manual refund/reconciliation.
+              </p>
+            ) : null}
             {b.status === "pending_payment" && b.paymentDeadline ? (
               <p>Payment deadline: {formatDeadline(b.paymentDeadline)}</p>
             ) : null}
@@ -292,7 +298,12 @@ export function AdminDashboard() {
         } | null;
         throw new Error(data?.error || `HTTP ${res.status}`);
       }
-      toast.success("Booking cancelled. Time slot released.");
+      const result = (await res.json()) as { refundRequired?: boolean };
+      toast.success(
+        result.refundRequired
+          ? "Booking cancelled. Payment requires manual refund/reconciliation."
+          : "Booking cancelled. Time slot released.",
+      );
       setCancelTarget(null);
       await fetchBookings(activeTab);
     } catch (e) {
@@ -343,7 +354,9 @@ export function AdminDashboard() {
       ? "No bookings awaiting payment."
       : activeTab === "paid"
         ? "No paid bookings right now."
-        : "No completed bookings yet.";
+        : activeTab === "completed"
+          ? "No completed bookings yet."
+          : "No cancelled bookings.";
 
   return (
     <div className="admin-shell">

@@ -14,16 +14,24 @@ function ResultContent() {
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(!!ref);
   const [notFound, setNotFound] = useState(false);
+  const [accessUnavailable, setAccessUnavailable] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const MAX_ATTEMPTS = 6; // 6 × 5s = 30s
 
   // Used by the polling interval (called from a callback, not an effect body).
   const pollBooking = async () => {
     if (!ref) return;
+    const accessToken = window.sessionStorage.getItem(`booking-access:${ref}`);
+    if (!accessToken) return;
     try {
       const res = await fetch(`/api/bookings/${encodeURIComponent(ref)}`, {
         cache: "no-store",
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (res.status === 401) {
+        setAccessUnavailable(true);
+        return;
+      }
       if (res.status === 404) {
         setNotFound(true);
         return;
@@ -39,9 +47,28 @@ function ResultContent() {
   useEffect(() => {
     if (!ref) return;
     let cancelled = false;
-    fetch(`/api/bookings/${encodeURIComponent(ref)}`, { cache: "no-store" })
+    const accessToken = window.sessionStorage.getItem(`booking-access:${ref}`);
+    if (!accessToken) {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setAccessUnavailable(true);
+        setLoading(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetch(`/api/bookings/${encodeURIComponent(ref)}`, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
       .then(async (r) => {
         if (cancelled) return;
+        if (r.status === 401) {
+          setAccessUnavailable(true);
+          setLoading(false);
+          return;
+        }
         if (r.status === 404) {
           setNotFound(true);
           setLoading(false);
@@ -121,7 +148,7 @@ function ResultContent() {
     );
   }
 
-  if (notFound || !booking) {
+  if (accessUnavailable || notFound || !booking) {
     return (
       <div className="booking-shell">
         <div className="booking-wrap">
@@ -129,11 +156,12 @@ function ResultContent() {
             <div className="result-icon" aria-hidden="true">
               ✕
             </div>
-            <h1>Booking not found</h1>
+            <h1>{accessUnavailable ? "Booking access unavailable" : "Booking not found"}</h1>
             <p>
-              We couldn&apos;t find a booking with reference{" "}
-              <span className="ref">{ref}</span>. If you believe this is an
-              error, please contact JESS and quote this reference.
+              {accessUnavailable
+                ? "Open this page in the same browser used to create the booking. If you still cannot access it, contact JESS and quote reference "
+                : "We couldn&apos;t find a booking with reference "}
+              <span className="ref">{ref}</span>.
             </p>
             <Link href="/" className="btn btn-dark">
               Back to home
@@ -230,8 +258,7 @@ function ResultContent() {
           </div>
           <h1>Booking confirmed</h1>
           <p>
-            Thank you, {booking.customer.fullName.split(" ")[0] || "friend"}!
-            Your reservation is locked in. We&apos;ll see you on{" "}
+            Thank you! Your reservation is locked in. We&apos;ll see you on{" "}
             <strong>{booking.appointmentDate}</strong> at{" "}
             <strong>{booking.departureLabel}</strong> (departure time — JESS
             arrives around <strong>{booking.arrivalLabel}</strong>).
