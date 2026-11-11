@@ -26,6 +26,7 @@ interface BookingStatus {
   customerEmail: string;
   customerMobile: string;
   createdAt: string;
+  paymentCheck: 'not_needed' | 'pending' | 'unavailable';
 }
 
 function ConfirmationContent() {
@@ -58,7 +59,7 @@ function ConfirmationContent() {
         setBooking(data);
         setLoading(false);
         // If still pending, keep polling for a bit (webhook may arrive shortly).
-        if (data.status === 'pending' && attempts < 6) {
+        if (data.status === 'pending' && attempts < 12) {
           setTimeout(poll, 5000);
         }
       } catch {
@@ -129,7 +130,9 @@ function ConfirmationContent() {
         {isPaid &&
           'Thank you! Your reservation fee has been received. Your appointment is confirmed. JESS will arrive at your address around the estimated arrival time.'}
         {isPending &&
-          'Your booking is pending payment verification. If you just paid, please wait a moment — we are confirming with PayRex. If payment was not completed, your slot will be released shortly.'}
+          (booking.paymentCheck === 'unavailable'
+            ? 'We could not check your payment with PayRex just now. Your booking is still awaiting confirmation. Please check the status again shortly.'
+            : 'Your booking is awaiting payment confirmation from PayRex. This page checks again automatically for about a minute.')}
         {isCompleted && 'Your appointment has been marked as completed. Thank you for choosing JESS Salon at Home!'}
         {isCancelled &&
           `This booking was cancelled${
@@ -175,7 +178,9 @@ function ConfirmationContent() {
 
       {isPending && (
         <p className="slot-note" style={{ marginTop: 18 }}>
-          You can refresh this page in a few seconds to check for payment confirmation.
+          <button className="btn btn-ghost" onClick={() => window.location.reload()}>
+            Check payment status
+          </button>
         </p>
       )}
 

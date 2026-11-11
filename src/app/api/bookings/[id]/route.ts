@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getBookingByReference } from '@/lib/booking-server';
+import {
+  getBookingByReference,
+  markBookingPaid,
+} from '@/lib/booking-server';
+import { isPayrexConfigured } from '@/lib/env';
+import { retrieveCheckoutSession } from '@/lib/payrex';
 
 /**
  * GET /api/bookings/[id]?ref=REFERENCE
@@ -24,15 +29,41 @@ export async function GET(
     return NextResponse.json({ error: 'Missing booking reference.' }, { status: 400 });
   }
 
-  const booking = await getBookingByReference(reference);
-  if (!booking) {
+  const foundBooking = await getBookingByReference(reference);
+  if (!foundBooking) {
     return NextResponse.json({ error: 'Booking not found.' }, { status: 404 });
+  }
+  let booking = foundBooking;
+
+  let paymentCheck: 'not_needed' | 'pending' | 'unavailable' = 'not_needed';
+  if (booking.status === 'pending') {
+    paymentCheck = 'pending';
+    if (booking.checkout_session_id && isPayrexConfigured()) {
+      try {
+        const verification = await retrieveCheckoutSession(booking.checkout_session_id);
+        if (verification.paid) {
+          await markBookingPaid(booking.id, verification.paymentIntentId, 'confirmation-check');
+          const refreshedBooking = await getBookingByReference(reference);
+          if (!refreshedBooking) {
+            throw new Error('Booking disappeared after payment verification.');
+          }
+          booking = refreshedBooking;
+          paymentCheck = 'not_needed';
+        }
+      } catch (error) {
+        console.error('Could not verify PayRex payment from booking confirmation:', error);
+        paymentCheck = 'unavailable';
+      }
+    } else if (!booking.checkout_session_id || !isPayrexConfigured()) {
+      paymentCheck = 'unavailable';
+    }
   }
 
   // Only expose customer-safe fields.
   return NextResponse.json({
     reference: booking.reference,
     status: booking.status,
+    paymentCheck,
     appointmentDate: booking.appointment_date,
     departureHour: booking.departure_hour,
     committedHours: booking.committed_hours,

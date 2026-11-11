@@ -291,7 +291,16 @@ function BookingCard({
           <span className="v" style={{ textAlign: 'right' }}>{b.service_address}</span>
         </div>
         <div className="row"><span className="k">Total price</span><span className="v">{formatCurrency(b.total_price)}</span></div>
-        <div className="row"><span className="k">Reservation paid</span><span className="v">{formatCurrency(b.reservation_fee)}</span></div>
+        <div className="row">
+          <span className="k">
+            {b.status === 'pending'
+              ? 'Reservation fee (awaiting payment)'
+              : b.status === 'cancelled'
+                ? 'Reservation fee'
+                : 'Reservation paid'}
+          </span>
+          <span className="v">{formatCurrency(b.reservation_fee)}</span>
+        </div>
         <div className="row"><span className="k">Cash balance</span><span className="v">{formatCurrency(b.remaining_balance)}</span></div>
         <div className="row"><span className="k">Reserved block</span><span className="v">{b.committed_hours}h ({b.service_hours}h svc + {b.travel_hours}h travel)</span></div>
         {b.payment_reference && (

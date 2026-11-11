@@ -24,9 +24,8 @@ import { createServiceClient } from '@/lib/supabase/server';
  * booking Paid.
  *
  * Idempotency & race handling:
- *   - Each PayRex event has a unique `id` (evt_...). We insert it into
- *     `webhook_events` (PRIMARY KEY) before processing. A duplicate
- *     delivery returns 200 without side effects.
+ *   - Each PayRex event has a unique `id` (evt_...). We record it only
+ *     after processing, so failed processing can be retried by PayRex.
  *   - markBookingPaid uses a conditional UPDATE (... WHERE status='pending')
  *     so a concurrent timeout-cleanup job cannot double-process.
  *
@@ -58,30 +57,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Signature error.' }, { status: 400 });
   }
 
-  // Idempotency: record the event id first. If it already exists, we're done.
-  let isNew: boolean;
-  try {
-    isNew = await recordWebhookEvent(event.id, event.type, null, event);
-  } catch {
-    // A unique-violation means already processed.
-    return NextResponse.json({ received: true, duplicate: true });
-  }
-  if (!isNew) {
-    return NextResponse.json({ received: true, duplicate: true });
-  }
-
   // We only act on payment success events.
   const isSuccess =
     event.type === 'payment_intent.succeeded' || event.type === 'payment.paid';
 
   if (!isSuccess) {
     // Acknowledge other events (no action). This stops PayRex retries.
-    return NextResponse.json({ received: true, type: event.type, action: 'ignored' });
+    const isNew = await recordWebhookEvent(event.id, event.type, null, event);
+    return NextResponse.json({
+      received: true,
+      duplicate: !isNew,
+      type: event.type,
+      action: 'ignored',
+    });
   }
 
   const resource = event.data?.resource;
   if (!resource) {
-    return NextResponse.json({ received: true, action: 'no_resource' });
+    return NextResponse.json({ error: 'Payment event has no resource.' }, { status: 400 });
   }
 
   // Find the matching booking. PayRex stores our booking reference in
@@ -137,41 +130,45 @@ export async function POST(request: Request) {
   }
 
   if (!bookingId) {
-    // No matching booking — acknowledge so PayRex stops retrying.
-    return NextResponse.json({ received: true, action: 'no_booking' });
+    // The booking may not have been persisted yet; allow PayRex to retry.
+    return NextResponse.json({ error: 'No matching booking yet.' }, { status: 503 });
+  }
+  if (!checkoutSessionId) {
+    return NextResponse.json({ error: 'Booking has no checkout session to verify.' }, { status: 503 });
   }
 
   // Double-verify the payment by retrieving the checkout session from PayRex.
   // This guards against a forged (but correctly-signed) webhook being used to
   // confirm a non-existent payment.
   let paymentReference: string | null = resource.id ?? null;
-  if (checkoutSessionId) {
-    try {
-      const verification = await retrieveCheckoutSession(checkoutSessionId);
-      if (!verification.paid) {
-        // PayRex says not paid — do NOT mark paid. Acknowledge to stop retries.
-        return NextResponse.json({
-          received: true,
-          action: 'not_paid',
-          status: verification.paymentIntentStatus,
-        });
-      }
-      paymentReference = verification.paymentIntentId ?? paymentReference;
-    } catch {
-      // If PayRex can't be reached, keep the booking pending. PayRex will
-      // retry the webhook. Do NOT mark paid on uncertainty.
-      return NextResponse.json(
-        { received: true, action: 'verify_unavailable' },
-        { status: 200 },
-      );
+  try {
+    const verification = await retrieveCheckoutSession(checkoutSessionId);
+    if (!verification.paid) {
+      // The event may arrive before the checkout session reflects payment.
+      return NextResponse.json({
+        error: 'PayRex has not confirmed payment yet.',
+        status: verification.paymentIntentStatus,
+      }, { status: 503 });
     }
+    paymentReference = verification.paymentIntentId ?? paymentReference;
+  } catch {
+    // Do not acknowledge transient verification failures; PayRex can retry.
+    return NextResponse.json(
+      { received: true, action: 'verify_unavailable' },
+      { status: 503 },
+    );
   }
 
   // Mark the booking paid. Conditional on status='pending' so it's safe
   // against concurrent operations.
   await markBookingPaid(bookingId, paymentReference, 'webhook');
 
-  return NextResponse.json({ received: true, action: 'paid' });
+  const isNew = await recordWebhookEvent(event.id, event.type, bookingId, event);
+  return NextResponse.json({
+    received: true,
+    duplicate: !isNew,
+    action: 'paid',
+  });
 }
 
 // PayRex may send a GET to verify the endpoint; respond 200.

@@ -168,13 +168,21 @@ export async function POST(request: Request) {
   // Persist the checkout session id + URL on the booking.
   const { createServiceClient } = await import('@/lib/supabase/server');
   const supabase = createServiceClient();
-  await supabase
+  const { error: checkoutSaveError } = await supabase
     .from('bookings')
     .update({
       checkout_session_id: checkout.id,
       checkout_url: checkout.url,
     })
     .eq('id', booking.id);
+  if (checkoutSaveError) {
+    console.error('Could not save PayRex checkout session for booking:', checkoutSaveError);
+    await cancelPendingOnCheckoutFailure(booking.id);
+    return NextResponse.json(
+      { error: 'We could not save your payment session. Please try again or contact JESS directly.' },
+      { status: 502 },
+    );
+  }
 
   return NextResponse.json({
     bookingReference: booking.reference,
@@ -201,6 +209,6 @@ async function cancelPendingOnCheckoutFailure(bookingId: string) {
       .eq('id', bookingId)
       .eq('status', 'pending');
   } catch {
-    // best-effort
+    console.error('Could not release booking after PayRex checkout setup failed:', bookingId);
   }
 }
