@@ -20,6 +20,7 @@ interface BookingStatus {
   reservationFee: number;
   remainingBalance: number;
   haircutQuantity: number;
+  haircutTypeNotes: string | null;
   majorSelections: { serviceId: string; variantId: string; name: string; variantLabel: string; price: number; durationHours: number }[];
   cancellationReason: string | null;
   customerName: string;
@@ -159,7 +160,10 @@ function ConfirmationContent() {
         <div className="ac-services">
           <h6>Selected services</h6>
           {booking.haircutQuantity > 0 && (
-            <div className="svc"><b>{booking.haircutQuantity} haircut(s)</b></div>
+            <div className="svc">
+              <b>{booking.haircutQuantity} haircut(s)</b>
+              {booking.haircutTypeNotes && <small> · {booking.haircutTypeNotes}</small>}
+            </div>
           )}
           {booking.majorSelections.map((m, i) => (
             <div className="svc" key={i}>

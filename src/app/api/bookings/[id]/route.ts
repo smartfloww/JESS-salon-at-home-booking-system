@@ -74,6 +74,7 @@ export async function GET(
     reservationFee: booking.reservation_fee,
     remainingBalance: booking.remaining_balance,
     haircutQuantity: booking.haircut_quantity,
+    haircutTypeNotes: booking.haircut_type_notes,
     majorSelections: booking.major_selections,
     cancellationReason: booking.cancellation_reason,
     customerName: booking.customer_name,

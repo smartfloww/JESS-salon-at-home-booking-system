@@ -134,6 +134,23 @@ test('pricing: 2 major services alone', () => {
   assert.equal(p.remainingBalance, 4300 - 3000);
 });
 
+test('pricing: the same major service can be selected twice', () => {
+  const service = findMajorService('modern-ventosa')!;
+  const variant = findVariant(service, 'standard')!;
+  const selection: BookingSelection = {
+    haircutQuantity: 0,
+    majorSelections: [
+      { serviceId: service.id, variantId: variant.id },
+      { serviceId: service.id, variantId: variant.id },
+    ],
+    serviceAreaId: 'metro-manila',
+  };
+  const pricing = calculatePricing(selection);
+  assert.equal(pricing.majorTotal, variant.price * 2);
+  assert.equal(pricing.reservationFee, 3000);
+  assert.equal(serviceHours(selection), variant.durationHours * 2);
+});
+
 /* ------------------------------------------------------------------ */
 /* Duration & scheduling                                               */
 /* ------------------------------------------------------------------ */

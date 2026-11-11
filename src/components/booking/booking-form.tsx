@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  HAIRCUT_TYPE_NAMES,
+  HAIRCUT_GROUPS,
   MAX_HAIRCUTS,
   MAX_MAJORS_ONLY,
   MAJOR_CATEGORIES,
@@ -45,8 +45,8 @@ const STEP_LABELS: { n: Step; label: string }[] = [
 export function BookingForm() {
   const [step, setStep] = useState<Step>(1);
 
-  const [haircutQty, setHaircutQty] = useState(0);
   const [haircutTypes, setHaircutTypes] = useState<string[]>([]);
+  const haircutQty = haircutTypes.length;
   const [majors, setMajors] = useState<MajorSelection[]>([]);
   const [areaId, setAreaId] = useState('');
   const [name, setName] = useState('');
@@ -107,27 +107,30 @@ export function BookingForm() {
     return () => {
       cancelled = true;
     };
-  }, [step, date, haircutQty, majors.length, areaId]);
+  }, [step, date, haircutQty, majors, areaId]);
 
-  function toggleHaircutType(t: string) {
-    setHaircutTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+  function addHaircutType(t: string) {
+    if (!canAddHaircut(haircutQty, majors.length)) return;
+    setHaircutTypes((prev) => [...prev, t]);
   }
 
-  function toggleMajor(serviceId: string, variantId: string) {
-    setMajors((prev) => {
-      const existing = prev.find((m) => m.serviceId === serviceId);
-      if (existing) {
-        if (existing.variantId === variantId) {
-          return prev.filter((m) => m.serviceId !== serviceId);
-        }
-        return prev.map((m) => (m.serviceId === serviceId ? { serviceId, variantId } : m));
-      }
-      return [...prev, { serviceId, variantId }];
+  function removeHaircutType(t: string) {
+    setHaircutTypes((prev) => {
+      const index = prev.lastIndexOf(t);
+      return index < 0 ? prev : prev.filter((_, i) => i !== index);
     });
   }
 
-  function adjustHaircutQty(delta: number) {
-    setHaircutQty((q) => Math.max(0, Math.min(MAX_HAIRCUTS, q + delta)));
+  function addMajor(serviceId: string, variantId: string) {
+    if (!canAddMajor(haircutQty, majors.length)) return;
+    setMajors((prev) => [...prev, { serviceId, variantId }]);
+  }
+
+  function removeMajor(serviceId: string, variantId: string) {
+    setMajors((prev) => {
+      const index = prev.findIndex((m) => m.serviceId === serviceId && m.variantId === variantId);
+      return index < 0 ? prev : prev.filter((_, i) => i !== index);
+    });
   }
 
   function validateContact(): Record<string, string> {
@@ -209,9 +212,10 @@ export function BookingForm() {
             haircutTypes={haircutTypes}
             majors={majors}
             combo={combo}
-            onQty={adjustHaircutQty}
-            onToggleType={toggleHaircutType}
-            onToggleMajor={toggleMajor}
+            onAddHaircut={addHaircutType}
+            onRemoveHaircut={removeHaircutType}
+            onAddMajor={addMajor}
+            onRemoveMajor={removeMajor}
           />
         )}
         {step === 2 && <StepArea areaId={areaId} onPick={setAreaId} />}
@@ -306,24 +310,32 @@ function StepServices({
   haircutTypes,
   majors,
   combo,
-  onQty,
-  onToggleType,
-  onToggleMajor,
+  onAddHaircut,
+  onRemoveHaircut,
+  onAddMajor,
+  onRemoveMajor,
 }: {
   haircutQty: number;
   haircutTypes: string[];
   majors: MajorSelection[];
   combo: ReturnType<typeof validateCombination>;
-  onQty: (delta: number) => void;
-  onToggleType: (t: string) => void;
-  onToggleMajor: (serviceId: string, variantId: string) => void;
+  onAddHaircut: (type: string) => void;
+  onRemoveHaircut: (type: string) => void;
+  onAddMajor: (serviceId: string, variantId: string) => void;
+  onRemoveMajor: (serviceId: string, variantId: string) => void;
 }) {
+  const [openCategory, setOpenCategory] = useState(
+    HAIRCUT_GROUPS[0]?.heading ??
+      '',
+  );
+  const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
+
   return (
     <div className="book-card">
       <h2 className="book-section-title">Choose your services</h2>
       <p className="book-section-sub">
-        You can book up to {MAX_HAIRCUTS} haircuts, or 1 haircut + 1 major service, or up to {MAX_MAJORS_ONLY}{' '}
-        major services alone. For groups of 20–30 people, please contact JESS directly.
+        Add services to your booking. You can choose up to {MAX_HAIRCUTS} haircuts, or 1 haircut + 1 major service,
+        or up to {MAX_MAJORS_ONLY} major services alone. The same service can be added more than once.
       </p>
 
       <div className={`combo-note ${combo.valid ? '' : 'error'}`}>
@@ -336,80 +348,180 @@ function StepServices({
         )}
       </div>
 
-      <div style={{ marginBottom: 24 }}>
-        <h3 style={sectionH3}>Haircuts {haircutQty > 0 && <span style={muted}>· {haircutQty} person(s)</span>}</h3>
-        <div className="haircut-qty">
-          <button className="qty-btn" onClick={() => onQty(-1)} disabled={haircutQty === 0} aria-label="Fewer haircuts">−</button>
-          <span className="qty-val">{haircutQty}</span>
-          <button className="qty-btn" onClick={() => onQty(1)} disabled={!canAddHaircut(haircutQty, majors.length)} aria-label="More haircuts">+</button>
-        </div>
-        {haircutQty > 0 && (
-          <div>
-            <p style={mutedSmall}>Optional — note which haircut type(s) you’d like:</p>
-            <div className="haircut-types">
-              {HAIRCUT_TYPE_NAMES.map((t) => (
-                <button key={t} className={`chip ${haircutTypes.includes(t) ? 'selected' : ''}`} onClick={() => onToggleType(t)}>
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      <h3 style={sectionH3}>Haircuts {haircutQty > 0 && <span style={muted}>· {haircutQty} selected</span>}</h3>
+      {HAIRCUT_GROUPS.map((group) => {
+        const categoryOpen = openCategory === group.heading;
+        const categorySelected = haircutTypes.filter((type) => group.services.includes(type)).length;
+        return (
+          <section className={`major-category ${categoryOpen ? 'open' : ''}`} key={group.heading}>
+            <button
+              className="major-category-toggle"
+              type="button"
+              aria-expanded={categoryOpen}
+              onClick={() => setOpenCategory((current) => current === group.heading ? '' : group.heading)}
+            >
+              <span className="major-category-title">{group.heading}</span>
+              <span className="major-category-count">
+                {categorySelected > 0 ? `${categorySelected} selected` : `${group.services.length} styles`}
+              </span>
+              <span className="major-category-chevron" aria-hidden="true">⌄</span>
+            </button>
+            {categoryOpen && (
+              <div className="major-group haircut-group">
+                {group.services.map((type) => {
+                  const count = haircutTypes.filter((selectedType) => selectedType === type).length;
+                  const disabled = count === 0 && !canAddHaircut(haircutQty, majors.length);
+                  return (
+                    <div className={`haircut-item ${count ? 'selected' : ''}`} key={type}>
+                      <button
+                        className="haircut-item-add"
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onAddHaircut(type)}
+                      >
+                        <span className="major-item-name">{type}</span>
+                        <span className="haircut-item-price">
+                          {haircutQty === 0 ? '₱999 first · ₱500 each after' : '₱500 additional'}
+                        </span>
+                        <span className="major-item-action">{count ? 'Add another' : 'Add haircut'}</span>
+                      </button>
+                      {count > 0 && (
+                        <div className="haircut-item-count">
+                          <button
+                            type="button"
+                            className="selection-stepper"
+                            aria-label={`Remove one ${type}`}
+                            onClick={() => onRemoveHaircut(type)}
+                          >
+                            −
+                          </button>
+                          <span>{count}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        );
+      })}
 
       <div>
-        <h3 style={sectionH3}>Major services {majors.length > 0 && <span style={muted}>· {majors.length} selected</span>}</h3>
+        <h3 style={{ ...sectionH3, marginTop: 24 }}>
+          Major services {majors.length > 0 && <span style={muted}>· {majors.length} selected</span>}
+        </h3>
         {MAJOR_CATEGORIES.map((cat) => (
-          <div className="major-group" key={cat.title}>
-            <h4>{cat.title}</h4>
-            {cat.services.map((serviceName) => {
-              const service = MAJOR_SERVICES.find((s) => s.name === serviceName);
-              if (!service) return null;
-              const selected = majors.find((m) => m.serviceId === service.id);
-              const disabled = !selected && !canAddMajor(haircutQty, majors.length);
-              return (
-                <div className={`major-item ${selected ? 'selected' : ''}`} key={service.id}>
-                  <div
-                    className="major-item-head"
-                    onClick={() => {
-                      if (disabled) return;
-                      if (selected) onToggleMajor(service.id, selected.variantId);
-                      else if (service.variants.length === 1) onToggleMajor(service.id, service.variants[0].id);
-                    }}
-                    style={disabled ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
-                  >
-                    <h5>{service.name}</h5>
-                    {service.variants.length > 1 ? (
-                      <span className="price-from">from {formatCurrency(Math.min(...service.variants.map((v) => v.price)))}</span>
-                    ) : (
-                      <span className="price-from">{formatCurrency(service.variants[0].price)} · {service.variants[0].durationHours}h</span>
-                    )}
-                  </div>
-                  {service.variants.length > 1 && (
-                    <div className="variant-list">
-                      {service.variants.map((v) => {
-                        const isSel = selected?.variantId === v.id;
-                        const variantDisabled = !isSel && !canAddMajor(haircutQty, majors.length);
-                        return (
+          <section className={`major-category ${openCategory === cat.title ? 'open' : ''}`} key={cat.title}>
+            <button
+              className="major-category-toggle"
+              type="button"
+              aria-expanded={openCategory === cat.title}
+              onClick={() => setOpenCategory((current) => current === cat.title ? '' : cat.title)}
+            >
+              <span className="major-category-title">{cat.title}</span>
+              <span className="major-category-count">
+                {cat.services.length} {cat.services.length === 1 ? 'service' : 'services'}
+              </span>
+              <span className="major-category-chevron" aria-hidden="true">⌄</span>
+            </button>
+            {openCategory === cat.title && (
+              <div className="major-group">
+                {cat.services.map((serviceName) => {
+                  const service = MAJOR_SERVICES.find((s) => s.name === serviceName);
+                  if (!service) return null;
+                  const serviceSelections = majors.filter((m) => m.serviceId === service.id);
+                  const selectedCount = serviceSelections.length;
+                  const hasVariants = service.variants.length > 1;
+                  const expanded = expandedServiceId === service.id;
+                  return (
+                    <div className={`major-item ${selectedCount ? 'selected' : ''}`} key={service.id}>
+                      <div className="major-item-head">
+                        <button
+                          className="major-item-select"
+                          type="button"
+                          aria-expanded={hasVariants ? expanded : undefined}
+                          disabled={!hasVariants && !canAddMajor(haircutQty, majors.length)}
+                          onClick={() => {
+                            if (hasVariants) {
+                              setExpandedServiceId((current) => current === service.id ? null : service.id);
+                            } else if (canAddMajor(haircutQty, majors.length)) {
+                              onAddMajor(service.id, service.variants[0].id);
+                            }
+                          }}
+                        >
+                          <span className="major-item-copy">
+                            <span className="major-item-name">{service.name}</span>
+                            <span className="price-from">
+                              {hasVariants
+                                ? `From ${formatCurrency(Math.min(...service.variants.map((v) => v.price)))}`
+                                : `${formatCurrency(service.variants[0].price)} · ${service.variants[0].durationHours}h`}
+                            </span>
+                          </span>
+                          <span className={`major-item-action ${!canAddMajor(haircutQty, majors.length) ? 'disabled' : ''}`}>
+                            {hasVariants
+                              ? (expanded ? 'Choose options' : 'Choose size')
+                              : !canAddMajor(haircutQty, majors.length)
+                                ? 'At limit'
+                                : selectedCount
+                                  ? 'Add another'
+                                  : 'Add'}
+                          </span>
+                        </button>
+                        {selectedCount > 0 && (
+                          <span className="major-item-count">{selectedCount} in booking</span>
+                        )}
+                      </div>
+                      {hasVariants && expanded && (
+                        <div className="variant-list">
+                          {service.variants.map((v) => {
+                            const count = serviceSelections.filter((m) => m.variantId === v.id).length;
+                            const variantDisabled = !canAddMajor(haircutQty, majors.length);
+                            return (
+                              <div className="variant-choice" key={v.id}>
+                                <button
+                                  className={`variant-opt ${count ? 'selected' : ''}`}
+                                  disabled={variantDisabled}
+                                  onClick={() => onAddMajor(service.id, v.id)}
+                                >
+                                  <span className="v-label">{v.label}</span>
+                                  <span className="v-dur">{v.durationHours}h</span>
+                                  <span className="v-price">{formatCurrency(v.price)}</span>
+                                  {count > 0 && <span className="variant-count">×{count}</span>}
+                                </button>
+                                {count > 0 && (
+                                  <button
+                                    type="button"
+                                    className="selection-stepper"
+                                    aria-label={`Remove one ${service.name} ${v.label}`}
+                                    onClick={() => onRemoveMajor(service.id, v.id)}
+                                  >
+                                    −
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {!hasVariants && selectedCount > 0 && (
+                        <div className="major-item-remove">
                           <button
-                            key={v.id}
-                            className={`variant-opt ${isSel ? 'selected' : ''}`}
-                            disabled={variantDisabled}
-                            onClick={() => onToggleMajor(service.id, v.id)}
-                            style={variantDisabled ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                            type="button"
+                            className="selection-stepper"
+                            aria-label={`Remove one ${service.name}`}
+                            onClick={() => onRemoveMajor(service.id, service.variants[0].id)}
                           >
-                            <span className="v-label">{v.label}</span>
-                            <span className="v-dur">{v.durationHours}h</span>
-                            <span className="v-price">{formatCurrency(v.price)}</span>
+                            −
                           </button>
-                        );
-                      })}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         ))}
       </div>
     </div>
@@ -431,6 +543,26 @@ function describeCombo(qty: number, majorCount: number): string {
   if (qty === 1 && majorCount === 1) return `1 haircut + 1 major service.`;
   if (qty === 0 && majorCount > 0) return `${majorCount} major service(s).`;
   return '';
+}
+
+function groupHaircutTypes(types: string[]) {
+  return types.reduce<{ type: string; quantity: number }[]>((groups, type) => {
+    const group = groups.find((item) => item.type === type);
+    if (group) group.quantity += 1;
+    else groups.push({ type, quantity: 1 });
+    return groups;
+  }, []);
+}
+
+function groupMajorSelections(selections: MajorSelection[]) {
+  return selections.reduce<{ serviceId: string; variantId: string; quantity: number }[]>((groups, selection) => {
+    const group = groups.find(
+      (item) => item.serviceId === selection.serviceId && item.variantId === selection.variantId,
+    );
+    if (group) group.quantity += 1;
+    else groups.push({ ...selection, quantity: 1 });
+    return groups;
+  }, []);
 }
 
 function StepArea({ areaId, onPick }: { areaId: string; onPick: (id: string) => void }) {
@@ -566,14 +698,23 @@ function StepReview(props: {
       </div>
       <div className="ac-services">
         <h6>Selected services</h6>
-        {props.haircutQty > 0 && (
-          <div className="svc"><b>{props.haircutQty} haircut(s)</b>{props.haircutTypes.length > 0 && <small> · {props.haircutTypes.join(', ')}</small>}</div>
+        {groupHaircutTypes(props.haircutTypes).map(({ type, quantity }) => (
+          <div className="svc" key={type}>
+            <b>{quantity > 1 ? `${quantity} × ` : ''}{type}</b>
+            <small>Haircut</small>
+          </div>
+        ))}
+        {props.haircutQty > 0 && props.haircutTypes.length === 0 && (
+          <div className="svc"><b>{props.haircutQty} haircut(s)</b></div>
         )}
-        {props.majors.map((m) => {
+        {groupMajorSelections(props.majors).map((m) => {
           const svc = findMajorService(m.serviceId);
           const v = svc ? findVariant(svc, m.variantId) : undefined;
           return (
-            <div className="svc" key={m.serviceId}><b>{svc?.name}</b>{v && <small> · {v.label} · {formatCurrency(v.price)} · {v.durationHours}h</small>}</div>
+            <div className="svc" key={`${m.serviceId}-${m.variantId}`}>
+              <b>{m.quantity > 1 ? `${m.quantity} × ` : ''}{svc?.name}</b>
+              {v && <small> · {v.label} · {formatCurrency(v.price)} · {v.durationHours}h</small>}
+            </div>
           );
         })}
       </div>
@@ -622,13 +763,24 @@ function Summary({
         {!hasItems && <p className="summary-empty">Select services to see your estimate.</p>}
         {hasItems && (
           <>
-            {haircutQty > 0 && (
-              <div className="summary-service"><b>{haircutQty} haircut(s)</b>{haircutTypes.length > 0 && <small>{haircutTypes.join(', ')}</small>}</div>
+            {groupHaircutTypes(haircutTypes).map(({ type, quantity }) => (
+              <div className="summary-service" key={type}>
+                <b>{quantity > 1 ? `${quantity} × ` : ''}{type}</b>
+                <small>Haircut</small>
+              </div>
+            ))}
+            {haircutQty > 0 && haircutTypes.length === 0 && (
+              <div className="summary-service"><b>{haircutQty} haircut(s)</b></div>
             )}
-            {majors.map((m) => {
+            {groupMajorSelections(majors).map((m) => {
               const svc = findMajorService(m.serviceId);
               const v = svc ? findVariant(svc, m.variantId) : undefined;
-              return <div className="summary-service" key={m.serviceId}><b>{svc?.name}</b>{v && <small>{v.label} · {formatCurrency(v.price)}</small>}</div>;
+              return (
+                <div className="summary-service" key={`${m.serviceId}-${m.variantId}`}>
+                  <b>{m.quantity > 1 ? `${m.quantity} × ` : ''}{svc?.name}</b>
+                  {v && <small>{v.label} · {formatCurrency(v.price)}</small>}
+                </div>
+              );
             })}
           </>
         )}

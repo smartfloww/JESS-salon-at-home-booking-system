@@ -182,7 +182,7 @@ export function resolveBooking(input: CreateBookingInput): {
 } {
   const haircutQuantity = Math.max(0, Math.floor(input.haircutQuantity || 0));
   const majorSelections = Array.isArray(input.majorSelections)
-    ? input.majorSelections.slice(0, 2)
+    ? input.majorSelections
     : [];
 
   // Resolve & trust catalogue only.
