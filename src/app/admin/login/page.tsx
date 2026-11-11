@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClientSafe } from '@/lib/supabase/browser';
 import '@/components/booking/booking.css';
 
-export default function AdminLoginPage() {
+function AdminLoginContent() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get('next') ?? '/admin';
@@ -104,5 +104,13 @@ export default function AdminLoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={<div className="admin-login">Loading…</div>}>
+      <AdminLoginContent />
+    </Suspense>
   );
 }
