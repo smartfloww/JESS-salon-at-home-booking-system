@@ -1,126 +1,108 @@
-"use client";
+'use client';
 
-/**
- * JESS admin sign-in page.
- *
- * Standalone page (NOT wrapped in <AppShell>). Renders a centered
- * `.login-shell` (full-viewport onyx) with a `.login-card` and a Supabase
- * Auth password form. On success, navigates to /admin.
- */
-
-import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { createBrowserClientSafe } from '@/lib/supabase/browser';
+import '@/components/booking/booking.css';
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const params = useSearchParams();
+  const next = params.get('next') ?? '/admin';
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [configured, setConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // Check if already signed in.
+    fetch('/api/admin/session')
+      .then((r) => r.json())
+      .then((d) => {
+        setConfigured(Boolean(d.configured));
+        if (d.authenticated) router.replace(next);
+      })
+      .catch(() => setConfigured(false));
+  }, [router, next]);
+
+  async function signIn(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting) return;
-    setError(null);
-    setSubmitting(true);
+    setError('');
+    setLoading(true);
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (signInError) {
-        setError("Invalid email or password.");
+      const supabase = createBrowserClientSafe();
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setError(error.message || 'Invalid email or password.');
+        setLoading(false);
         return;
       }
-
-      const response = await fetch("/api/admin/bookings?status=paid", {
-        cache: "no-store",
-      });
-      if (response.status === 401) {
-        await supabase.auth.signOut();
-        setError("This account is not authorized to access the JESS admin area.");
-        return;
-      }
-      if (!response.ok) {
-        throw new Error("Admin access could not be verified. Please try again.");
-      }
-
-      router.replace("/admin");
-    } catch (signInFailure) {
+      router.replace(next);
+      router.refresh();
+    } catch (err) {
       setError(
-        signInFailure instanceof Error
-          ? signInFailure.message
-          : "Sign in failed. Please try again.",
+        err instanceof Error
+          ? err.message
+          : 'Sign-in failed. Check that Supabase is configured.',
       );
-    } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   }
 
   return (
-    <main className="login-shell">
-      <div className="login-card">
-        <p className="eyebrow">JESS SALON AT HOME</p>
+    <div className="admin-login">
+      <div className="admin-login-box">
+        <Link href="/" className="brand" style={{ justifyContent: 'center' }}>
+          <img className="brand-logo" src="/imgs/logo.jpeg" alt="" />
+          <span className="brand-wordmark">
+            <span className="brand-name">JESS<span className="brand-period">.</span></span>
+            <span className="brand-caption">SALON AT HOME</span>
+          </span>
+        </Link>
         <h1>Admin sign in</h1>
+        <p>Private dashboard for JESS. Only authorized accounts can access bookings.</p>
 
-        <form onSubmit={handleSubmit} noValidate>
+        {configured === false && (
+          <div className="err">
+            Supabase is not configured. Set the required environment variables before signing in.
+            See <b>.env.example</b>.
+          </div>
+        )}
+        {error && <div className="err">{error}</div>}
+
+        <form onSubmit={signIn}>
           <div className="field">
-            <label htmlFor="admin-email">Email</label>
+            <label>Email</label>
             <input
-              id="admin-email"
               type="email"
-              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              disabled={submitting}
-              placeholder="you@jesssalonathome.ph"
+              autoComplete="email"
+              disabled={loading}
             />
           </div>
-
           <div className="field">
-            <label htmlFor="admin-password">Password</label>
+            <label>Password</label>
             <input
-              id="admin-password"
               type="password"
-              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              disabled={submitting}
+              autoComplete="current-password"
+              disabled={loading}
             />
           </div>
-
-          {error && (
-            <div className="login-error" role="alert">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            className="btn btn-gold btn-block"
-            disabled={submitting || !email || !password}
-            style={{ marginTop: 18 }}
-          >
-            {submitting ? "Signing in…" : "Sign in"}
-          </button>
+          <div className="book-actions" style={{ marginTop: 8 }}>
+            <button type="submit" className="btn btn-primary" disabled={loading || configured === false} style={{ width: '100%' }}>
+              {loading ? 'Signing in…' : 'Sign in'}
+            </button>
+          </div>
         </form>
-
-        <p
-          style={{
-            marginTop: 22,
-            fontSize: 11,
-            letterSpacing: ".04em",
-            color: "#9a8d7c",
-            textAlign: "center",
-          }}
-        >
-          This area is private. JESS only.
-        </p>
       </div>
-    </main>
+    </div>
   );
 }

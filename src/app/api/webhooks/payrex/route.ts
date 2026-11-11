@@ -1,118 +1,180 @@
+import { NextResponse } from 'next/server';
+import {
+  verifyWebhookSignature,
+  retrieveCheckoutSession,
+  type PayrexEvent,
+  WebhookSignatureError,
+} from '@/lib/payrex';
+import { getConfig, isPayrexConfigured } from '@/lib/env';
+import {
+  recordWebhookEvent,
+  markBookingPaid,
+} from '@/lib/booking-server';
+import { createServiceClient } from '@/lib/supabase/server';
+
 /**
  * POST /api/webhooks/payrex
  *
- * PayRex webhook receiver. Verifies the HMAC-SHA256 signature using the
- * PAYREX_WEBHOOK_SECRET, then updates the booking payment status.
+ * PayRex webhook receiver. Verifies the signature, deduplicates by event
+ * id, and — on a verified successful payment — marks the matching booking
+ * as Paid.
  *
- * Expected PayRex event payloads (current API):
- *   {
- *     "data": {
- *       "id": "evt_…",
- *       "type": "payment.succeeded" | "checkout_session.paid" | …,
- *       "attributes": {
- *         "reference": "JESS-XXXXX",
- *         "amount": 50000,            // centavos
- *         "currency": "PHP",
- *         "status": "paid",
- *         "checkout_session_id": "chksess_…"
- *       }
- *     }
- *   }
+ * IMPORTANT: The success_url redirect is NOT proof of payment. This
+ * webhook (or a server-side retrieve) is the only thing that can mark a
+ * booking Paid.
  *
- * The handler is IDEMPOTENT: duplicate events are no-ops because we look up
- * the payment by `providerRef` and only transition `pending` → `successful`.
+ * Idempotency & race handling:
+ *   - Each PayRex event has a unique `id` (evt_...). We insert it into
+ *     `webhook_events` (PRIMARY KEY) before processing. A duplicate
+ *     delivery returns 200 without side effects.
+ *   - markBookingPaid uses a conditional UPDATE (... WHERE status='pending')
+ *     so a concurrent timeout-cleanup job cannot double-process.
+ *
+ * Signature: see src/lib/payrex.ts verifyWebhookSignature().
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseAdminClient } from "@/lib/db";
-import { verifyWebhookSignature } from "@/lib/payrex";
-import { matchesPayRexSuccessEvent, parsePayRexSuccessEvent } from "@/lib/payrex-webhook";
+// PayRex sends urlencoded-ish JSON as a raw body; we MUST read it raw to
+// compute the signature. Next.js Route Handlers give us the body via
+// request.text() — this preserves the exact bytes PayRex signed.
 
-export async function POST(req: NextRequest) {
-  const rawBody = await req.text();
-  const signature = req.headers.get("payrex-signature") || req.headers.get("Payrex-Signature");
-
-  if (!verifyWebhookSignature(rawBody, signature)) {
-    return NextResponse.json({ error: "Invalid signature." }, { status: 401 });
+export async function POST(request: Request) {
+  if (!isPayrexConfigured()) {
+    return NextResponse.json({ error: 'PayRex not configured.' }, { status: 503 });
   }
 
-  let payload: unknown;
+  const config = getConfig();
+  const signatureHeader = request.headers.get('Payrex-Signature');
+
+  // Read the raw body exactly as received.
+  const rawBody = await request.text();
+
+  let event: PayrexEvent;
   try {
-    payload = JSON.parse(rawBody);
+    event = verifyWebhookSignature(signatureHeader, rawBody, config.payrexWebhookSecretKey);
+  } catch (e) {
+    if (e instanceof WebhookSignatureError) {
+      return NextResponse.json({ error: 'Invalid signature.' }, { status: 400 });
+    }
+    return NextResponse.json({ error: 'Signature error.' }, { status: 400 });
+  }
+
+  // Idempotency: record the event id first. If it already exists, we're done.
+  let isNew: boolean;
+  try {
+    isNew = await recordWebhookEvent(event.id, event.type, null, event);
   } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
+    // A unique-violation means already processed.
+    return NextResponse.json({ received: true, duplicate: true });
+  }
+  if (!isNew) {
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
-  const event = parsePayRexSuccessEvent(payload);
-  if (!event) {
-    return NextResponse.json({ error: "Incomplete or invalid payment event." }, { status: 400 });
+  // We only act on payment success events.
+  const isSuccess =
+    event.type === 'payment_intent.succeeded' || event.type === 'payment.paid';
+
+  if (!isSuccess) {
+    // Acknowledge other events (no action). This stops PayRex retries.
+    return NextResponse.json({ received: true, type: event.type, action: 'ignored' });
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data: booking, error: bookingError } = await supabase
-    .from("bookings")
-    .select("id, reference, reservation_fee, payments(id, provider_ref, amount, status)")
-    .eq("reference", event.reference)
-    .maybeSingle();
-  if (bookingError) {
-    console.error("Could not look up PayRex booking:", bookingError);
-    return NextResponse.json({ error: "Booking lookup failed." }, { status: 500 });
-  }
-  if (!booking) {
-    return NextResponse.json({ error: "Booking or checkout session not found." }, { status: 404 });
+  const resource = event.data?.resource;
+  if (!resource) {
+    return NextResponse.json({ received: true, action: 'no_resource' });
   }
 
-  const payment = booking.payments.find(
-    (candidate) => candidate.provider_ref === event.checkoutSessionId,
-  );
-  if (!payment) {
-    return NextResponse.json({ error: "Booking or checkout session not found." }, { status: 404 });
+  // Find the matching booking. PayRex stores our booking reference in
+  // metadata (we set it at checkout creation) and/or customer_reference_id.
+  // The resource may be a payment_intent or a payment; we resolve the
+  // booking via the checkout_session_id → bookings.checkout_session_id.
+  const supabase = createServiceClient();
+
+  // Strategy: look up by checkout_session_id if present, else by
+  // metadata.booking_reference / customer_reference_id.
+  let bookingId: string | null = null;
+  let checkoutSessionId: string | null =
+    resource.checkout_session_id ??
+    (typeof resource.metadata === 'object' && resource.metadata
+      ? (resource.metadata as Record<string, unknown>).checkout_session_id as string | undefined ?? null
+      : null);
+
+  const metaRef =
+    typeof resource.metadata === 'object' && resource.metadata
+      ? ((resource.metadata as Record<string, unknown>).booking_reference as string | undefined) ??
+        (resource.customer_reference_id as string | undefined)
+      : resource.customer_reference_id;
+
+  // Try lookup by checkout_session_id first.
+  if (checkoutSessionId) {
+    const { data } = await supabase
+      .from('bookings')
+      .select('id, reference')
+      .eq('checkout_session_id', checkoutSessionId)
+      .maybeSingle();
+    if (data) bookingId = data.id;
   }
 
-  if (!matchesPayRexSuccessEvent(
-    event,
-    { reference: booking.reference, reservationFee: booking.reservation_fee },
-    { providerRef: payment.provider_ref, amount: payment.amount },
-  )) {
-    return NextResponse.json(
-      { error: "Payment details do not match the booking." },
-      { status: 400 },
-    );
+  // Fallback: lookup by reference (metadata / customer_reference_id).
+  if (!bookingId && metaRef) {
+    const { data } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('reference', metaRef)
+      .maybeSingle();
+    if (data) {
+      bookingId = data.id;
+      // If we still don't have the checkout session id, fetch it.
+      if (!checkoutSessionId) {
+        const { data: full } = await supabase
+          .from('bookings')
+          .select('checkout_session_id')
+          .eq('id', bookingId)
+          .maybeSingle();
+        checkoutSessionId = full?.checkout_session_id ?? null;
+      }
+    }
   }
 
-  if (payment.status === "successful") {
-    return NextResponse.json({ ok: true, idempotent: true });
+  if (!bookingId) {
+    // No matching booking — acknowledge so PayRex stops retrying.
+    return NextResponse.json({ received: true, action: 'no_booking' });
   }
 
-  const { data: result, error } = await supabase.rpc("record_payment_success", {
-    p_reference: event.reference,
-    p_provider_ref: payment.provider_ref,
-    p_amount: event.amount,
-    p_raw_payload: rawBody.slice(0, 8000),
-  });
-  if (error) {
-    console.error("Could not record PayRex payment:", error);
-    return NextResponse.json({ error: "Payment could not be reconciled." }, { status: 500 });
-  }
-  if (result === "amount_mismatch") {
-    return NextResponse.json(
-      { error: "Payment amount does not match the booking." },
-      { status: 400 },
-    );
-  }
-  if (result === "not_found") {
-    return NextResponse.json({ error: "Booking or checkout session not found." }, { status: 404 });
-  }
-  if (result === "late_payment_refund_required") {
-    console.error(
-      `PayRex confirmed a late payment for ${event.reference}; manual refund/reconciliation is required.`,
-    );
-    return NextResponse.json({ ok: true, manualReview: true });
+  // Double-verify the payment by retrieving the checkout session from PayRex.
+  // This guards against a forged (but correctly-signed) webhook being used to
+  // confirm a non-existent payment.
+  let paymentReference: string | null = resource.id ?? null;
+  if (checkoutSessionId) {
+    try {
+      const verification = await retrieveCheckoutSession(checkoutSessionId);
+      if (!verification.paid) {
+        // PayRex says not paid — do NOT mark paid. Acknowledge to stop retries.
+        return NextResponse.json({
+          received: true,
+          action: 'not_paid',
+          status: verification.paymentIntentStatus,
+        });
+      }
+      paymentReference = verification.paymentIntentId ?? paymentReference;
+    } catch {
+      // If PayRex can't be reached, keep the booking pending. PayRex will
+      // retry the webhook. Do NOT mark paid on uncertainty.
+      return NextResponse.json(
+        { received: true, action: 'verify_unavailable' },
+        { status: 200 },
+      );
+    }
   }
 
-  return NextResponse.json({
-    ok: true,
-    idempotent: result === "idempotent",
-    reinstated: result === "late_payment_reinstated",
-  });
+  // Mark the booking paid. Conditional on status='pending' so it's safe
+  // against concurrent operations.
+  await markBookingPaid(bookingId, paymentReference, 'webhook');
+
+  return NextResponse.json({ received: true, action: 'paid' });
+}
+
+// PayRex may send a GET to verify the endpoint; respond 200.
+export async function GET() {
+  return NextResponse.json({ ok: true });
 }

@@ -1,401 +1,402 @@
-# JESS Salon at Home — Website & Booking System
+# JESS Salon at Home
 
-A polished, mobile-friendly salon booking platform for JESS Salon at Home
-(Batasan Hills, Quezon City, Philippines). Built on top of the existing
-static React+Vite website, this version adds a full booking system, a
-private admin dashboard for JESS, and a sandbox-ready PayRex payment
-integration.
+Salon-quality hair services, brought to your doorstep. A complete, deployment-ready
+booking website for **JESS Salon at Home** (Batasan Hills, Quezon City, Philippines).
 
-The backend uses **Supabase PostgreSQL**, **Supabase Auth**, and server-side
-Supabase clients for booking and admin operations. PayRex remains a separate
-server-side hosted-checkout integration.
+Customers browse the service menu, pick services, choose a service area, select an
+available time, and pay a reservation fee online via **PayRex Hosted Checkout**. The
+remaining balance is paid in cash at the appointment. JESS manages bookings through a
+private admin dashboard secured by **Supabase Auth**.
 
----
-
-## 1. Project overview
-
-| Page | Route | Description |
-|---|---|---|
-| Home | `/` | Original JESS homepage with hero, services preview, at-home pitch, work preview, booking CTA. |
-| Services | `/services` | Full service catalogue with the original accordion UI; prices fetched from the API. |
-| About | `/about` | Reorganised Contact page: contact options, opening hours, how-booking-works panel. |
-| Book | `/book` | 4-step booking flow: Service area → Services → Customer & appointment → Review & payment. |
-| Book result | `/book/result` | Booking confirmation / pending / cancelled screen. |
-| Mock checkout | `/book/mock-checkout` | Simulated PayRex checkout shown in MOCK payment mode. |
-| Admin login | `/admin/login` | Supabase Auth sign-in for allowlisted JESS admin accounts. |
-| Admin dashboard | `/admin` | Tabs: Pending · **Paid (default)** · Completed. Cancel / Mark Completed actions. |
-
-### Tech stack
-
-- **Next.js 16 (App Router)** + **TypeScript 5**
-- **Tailwind CSS 4** + shadcn/ui component library
-- **Supabase PostgreSQL** with versioned SQL migrations and Row Level Security
-- **Supabase Auth** for admin sessions; server routes check the admin allowlist
-- **PayRex** hosted Checkout Sessions + webhooks (sandbox-ready)
-- Original JESS design system (Playfair Display + DM Sans, black/cream/gold)
+This is a real application — not a demo. It uses a real Supabase database and real
+PayRex payment verification. If required credentials are missing, the app shows a
+clear configuration error instead of pretending a payment succeeded.
 
 ---
 
-## 2. Installation
+## Table of contents
 
-```bash
-# 1. Install dependencies
-bun install
+1. [Tech stack](#tech-stack)
+2. [Project structure](#project-structure)
+3. [Quick start (local development)](#quick-start-local-development)
+4. [Supabase setup](#supabase-setup)
+5. [PayRex setup](#payrex-setup)
+6. [Environment variables](#environment-variables)
+7. [Slot-lock cleanup (cron)](#slot-lock-cleanup-cron)
+8. [Deployment](#deployment)
+9. [Business rules reference](#business-rules-reference)
+10. [Testing](#testing)
 
-# 2. Create a Supabase project and configure environment (see .env.example)
-cp .env.example .env
-#   then set the Supabase project URL, anon key, and service-role key.
-#   Keep SUPABASE_SERVICE_ROLE_KEY server-only.
+---
 
-# 3. Apply the PostgreSQL schema (install the Supabase CLI separately)
-supabase link --project-ref YOUR_PROJECT_REF
-supabase db push
+## Tech stack
 
-# 4. Seed the service catalogue and service areas
-bun run db:seed
+| Layer | Technology |
+|------|-----------|
+| Framework | **Next.js 16** (App Router, Turbopack) with **TypeScript 5** |
+| Styling | Tailwind CSS 4 + a hand-written JESS stylesheet (black / cream / gold) preserving the original design |
+| UI components | shadcn/ui (used only in shared primitives) |
+| Database | **Supabase PostgreSQL** with **Row Level Security (RLS)** |
+| Auth | **Supabase Auth** (email + password, admin only) |
+| Payments | **PayRex Hosted Checkout** with verified webhooks |
+| Package manager | **npm** (this project uses npm scripts and `package.json`) |
 
-# 5. Start the dev server
-bun run dev
-# → http://localhost:3000
+> The original website was a Vite + React Router SPA. It has been migrated to
+> Next.js because the task requires server-side API routes (booking creation,
+> payment verification, webhooks, admin authorization). All original design
+> (CSS, fonts, images, content, the service catalogue) is preserved.
+
+---
+
+## Project structure
+
+```
+.
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx              # Root layout (loads fonts + JESS CSS)
+│   │   ├── globals.css             # Tailwind + shadcn theme tokens
+│   │   ├── jess.css                # Original JESS visual design (preserved)
+│   │   ├── (site)/                 # Public site (with header + footer)
+│   │   │   ├── layout.tsx
+│   │   │   ├── page.tsx            # Home
+│   │   │   ├── services/page.tsx   # Services (catalogue)
+│   │   │   ├── about/page.tsx      # About + contact
+│   │   │   └── book/
+│   │   │       ├── page.tsx        # 5-step booking flow
+│   │   │       └── confirmation/   # Payment result page
+│   │   ├── admin/                  # Private dashboard (auth-gated)
+│   │   │   ├── login/page.tsx
+│   │   │   └── page.tsx            # Pending / Paid / Completed tabs
+│   │   └── api/
+│   │       ├── bookings/           # availability, create, [id] status, cleanup
+│   │       ├── webhooks/payrex/    # PayRex webhook receiver
+│   │       └── admin/              # bookings list + actions, session
+│   ├── components/
+│   │   ├── site/                   # Header, footer, shared UI
+│   │   ├── services-content.tsx    # Services accordion
+│   │   └── booking/                # Booking form + styles
+│   ├── lib/
+│   │   ├── catalogue.ts            # SERVICE CATALOGUE (source of truth)
+│   │   ├── booking.ts              # Pricing, combinations, scheduling (pure)
+│   │   ├── booking-server.ts       # Server booking ops (Supabase, slot lock)
+│   │   ├── payrex.ts               # PayRex checkout + webhook verification
+│   │   ├── env.ts                  # Typed env access + config errors
+│   │   └── supabase/
+│   │       ├── server.ts           # Service-role + auth clients
+│   │       └── browser.ts          # Browser client (anon, auth only)
+│   └── proxy.ts                    # Auth guard for /admin (Next.js 16 proxy)
+├── supabase/migrations/
+│   ├── 0001_init.sql               # Schema (bookings, webhook_events)
+│   └── 0002_rls.sql                # RLS + is_admin() + app_config
+├── public/imgs/                    # Original site images (preserved)
+├── tests/booking.test.ts           # Unit tests for business logic
+├── .env.example                    # All env vars (placeholders only)
+└── package.json
 ```
 
-Create JESS's user in **Supabase Dashboard → Authentication → Users**, then
-add that Auth user's UUID to `public.admin_users` using the SQL Editor:
+---
+
+## Quick start (local development)
+
+### Requirements
+
+- **Node.js 20+** (Node 18 is the minimum; 20 LTS is recommended)
+- **npm** (comes with Node.js)
+- A Supabase project (see [Supabase setup](#supabase-setup))
+- A PayRex account (see [PayRex setup](#payrex-setup))
+
+### Install & run
+
+```bash
+npm install
+cp .env.example .env.local
+# Fill in .env.local with your real Supabase + PayRex values (see below)
+npm run dev
+```
+
+The app runs at **http://localhost:3000**.
+
+### Other scripts
+
+```bash
+npm run lint     # ESLint (Next.js + TypeScript rules)
+npm run build    # Production build
+npm test         # Unit tests for business logic (pricing, scheduling, combos)
+```
+
+> The dev server prints logs to `dev.log` for convenience.
+
+---
+
+## Supabase setup
+
+### 1. Create a project
+
+1. Go to <https://supabase.com> and create a new project.
+2. Wait for provisioning to finish.
+
+### 2. Apply the database migrations
+
+The schema and RLS policies are in `supabase/migrations/`. Apply them in order
+using the Supabase SQL Editor (Dashboard → SQL Editor → New query), paste the
+contents of each file, and run:
+
+1. `supabase/migrations/0001_init.sql` — creates `bookings` and `webhook_events`
+   tables, indexes, and the `updated_at` trigger.
+2. `supabase/migrations/0002_rls.sql` — enables RLS, creates the `is_admin()`
+   helper, the `app_config` table, and all RLS policies.
+
+You can re-run each file safely (they use `IF NOT EXISTS` / `DROP ... IF EXISTS`).
+
+### 3. Find your project URL and keys
+
+Dashboard → **Project Settings** → **API**:
+
+- **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
+- **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- **service_role** secret → `SUPABASE_SERVICE_ROLE_KEY` (server-only — never
+  expose in the browser)
+
+### 4. Create JESS's admin account
+
+1. Dashboard → **Authentication** → **Users** → **Add user**.
+2. Enter JESS's email and a strong password. Enable "Auto Confirm User".
+3. Copy the new user's **UID** (the long UUID).
+
+### 5. Register JESS as the admin
+
+Open the SQL Editor and run (replace the UUID with JESS's user id from step 4):
 
 ```sql
-insert into public.admin_users (user_id)
-values ('AUTH_USER_UUID');
+INSERT INTO app_config (id, admin_user_id)
+VALUES (1, 'PASTE-JESS-USER-UID-HERE')
+ON CONFLICT (id) DO UPDATE SET admin_user_id = EXCLUDED.admin_user_id;
 ```
 
-Only users explicitly added to this allowlist can use the admin dashboard or
-admin API routes. Disable public signups in the hosted project's Auth
-settings. The seed script does not create Auth users or credentials.
+This is the single row the `is_admin()` RLS function checks. Only this user can
+read or modify bookings through the application flow.
+
+### 6. Verify RLS
+
+- Open the table editor for `bookings` while **not** signed in (or as a non-admin
+  user) — you should see no rows. RLS blocks all access except via the admin
+  session or the service-role key (server-side).
+- Sign in at `/admin/login` with JESS's email + password — you should reach the
+  dashboard.
 
 ---
 
-## 3. Environment configuration
+## PayRex setup
 
-All configuration is via environment variables. See `.env.example` for the
-full list with placeholder values.
+This integration follows the **current official PayRex documentation**
+(<https://docs.payrex.com>), cross-verified against the official `payrex-node` SDK.
 
-| Variable | Required | Description |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Public Supabase key used for Supabase Auth in the browser. |
-| `SUPABASE_SERVICE_ROLE_KEY` | yes | Server-only key used by backend routes and seed scripts. Never prefix it with `NEXT_PUBLIC_`. |
-| `NEXT_PUBLIC_BASE_URL` | yes | Public base URL (no trailing slash). Used for PayRex redirect URLs. |
-| `PAYREX_SECRET_KEY` | required in production | PayRex **test** secret key. In development, leaving it empty selects mock mode. |
-| `PAYREX_PUBLIC_KEY` | no | PayRex test public key (currently unused server-side; reserved for client SDK if needed). |
-| `PAYREX_WEBHOOK_SECRET` | no | PayRex webhook signing secret. Set after registering the webhook in the PayRex dashboard. |
-| `PAYMENT_MOCK_MODE` | no | Development-only switch; `true` forces mock mode even if PayRex keys are present. Default: `false`. |
+### 1. Obtain your API credentials
 
-Mock checkout is available only outside production and requires an
-authenticated admin session to simulate payment completion. Production never
-completes mock payments, regardless of environment configuration. For local
-development, leave `PAYREX_SECRET_KEY` empty or set `PAYMENT_MOCK_MODE=true`.
-If a confirmed payment arrives after its slot has been reassigned, the booking
-is retained as cancelled and the payment is flagged for manual refund or
-reconciliation in the admin dashboard. An admin cancellation of a paid booking
-also flags its successful payment for that process; no automatic refund is
-attempted.
+Dashboard → **Developers** (at <https://dashboard.payrexhq.com>):
+
+- **Secret API key** (`sk_...`) → `PAYREX_SECRET_API_KEY` (server-only)
+- Test and live mode share the same API host (`https://api.payrexhq.com`);
+  which key you use determines the mode.
+
+### 2. Register the webhook endpoint
+
+1. Dashboard → **Developers** → **Webhooks** → **Add endpoint**.
+2. **Endpoint URL:** `https://YOUR-DOMAIN/api/webhooks/payrex`
+   - Must be a public **HTTPS** URL (PayRex posts to it from their servers).
+   - For local development use a tunnel (e.g. ngrok, Cloudflare Tunnel) pointing
+     at `http://localhost:3000`.
+3. **Subscribe to events** (per official docs):
+   - `payment_intent.succeeded` — the primary success event.
+   - `payment.paid` — also emitted on success (optional but recommended).
+4. Save. Copy the **Webhook signing secret** (`whsk_...`) →
+   `PAYREX_WEBHOOK_SECRET_KEY` (server-only).
+
+### 3. How payment verification works
+
+- The success redirect URL is **not** proof of payment.
+- Payment is confirmed **only** by a verified webhook signature (HMAC-SHA256 of
+  `"<timestamp>.<raw_body>"` with the `whsk_` secret, compared against the
+  `li`/`te` parts of the `Payrex-Signature` header), **and** a server-side
+  retrieve of the checkout session confirming `payment_intent.status === "succeeded"`.
+- Webhook events are deduplicated by their `evt_...` id (stored in
+  `webhook_events`) so re-deliveries are safe.
+
+> See `src/lib/payrex.ts` for the exact signature algorithm and
+> `src/app/api/webhooks/payrex/route.ts` for the handler.
 
 ---
 
-## 4. Database
+## Environment variables
 
-The schema and database functions are defined in the versioned SQL migrations
-under `supabase/migrations/`. Apply schema changes with `supabase db push`.
+All variables are listed in `.env.example`. Copy it to `.env.local` (development)
+or `.env` (production) and fill in real values.
 
-### Tables
+| Variable | Public? | Required | Purpose | Where to get it |
+|----------|---------|----------|---------|-----------------|
+| `NEXT_PUBLIC_SITE_URL` | yes | yes | Base URL of the deployed site (no trailing slash). Used for PayRex success/cancel redirect URLs. | Your deployment URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | yes | yes | Supabase project URL. | Supabase Dashboard → Settings → API |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | yes | Supabase anon key (safe for browser; RLS applies). | Supabase Dashboard → Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | **secret** | yes | Supabase service-role key — bypasses RLS. Server-only. Never expose in the browser. | Supabase Dashboard → Settings → API → service_role |
+| `PAYREX_SECRET_API_KEY` | **secret** | yes | PayRex secret API key (test or live). | PayRex Dashboard → Developers |
+| `PAYREX_WEBHOOK_SECRET_KEY` | **secret** | yes | PayRex webhook signing secret (`whsk_...`). | PayRex Dashboard → Developers → Webhooks |
+| `CLEANUP_API_KEY` | **secret** | yes | Shared secret protecting the cleanup cron endpoint. Generate a long random string. | You generate it |
 
-| Table | Purpose |
-|---|---|
-| `services`, `service_variants` | Service catalogue, prices, durations and variants. |
-| `service_areas` | Service areas and one-way travel times. |
-| `customers` | Customer details (one record per booking). |
-| `bookings` | Appointment, status, payment deadline and immutable booking totals. |
-| `booking_items` | Service snapshots (price and duration frozen at booking time). |
-| `payments` | PayRex checkout/payment records. |
-| `admin_users` | Allowlist of Supabase Auth user IDs permitted to administer bookings. |
+**Never commit real secrets.** `.env.example` contains placeholders only.
 
-Foreign keys, check constraints, supporting indexes, timestamp triggers and
-an exclusion constraint for overlapping active slots are installed by the
-migration. Booking creation, payment completion, cleanup and admin status
-changes use transaction-backed PostgreSQL functions. Public users may read
-the service catalogue and areas; customer, booking and payment tables have
-RLS enabled with no direct `anon`/`authenticated` access. The service-role
-key is used only in server-side handlers; admin handlers additionally
-require the server-side Auth allowlist check.
+---
 
-### Common commands
+## Slot-lock cleanup (cron)
+
+When a customer starts payment, the selected slot is locked for **10 minutes**.
+If payment is not completed in that window, the pending booking must be
+cancelled so the slot is released.
+
+This cleanup **must run reliably in production** — it cannot depend on someone
+opening the booking page. Configure a scheduled job that calls:
+
+```
+POST https://YOUR-DOMAIN/api/bookings/cleanup
+Authorization: Bearer <CLEANUP_API_KEY>
+```
+
+**Recommended: every 1 minute.**
+
+Options:
+- **Vercel Cron** (if deploying on Vercel): add to `vercel.json` a cron with
+  `path: "/api/bookings/cleanup"` and a header — Vercel Cron sends
+  `Authorization: Bearer <CRON_SECRET>`. Set `CRON_SECRET` = `CLEANUP_API_KEY`.
+- **Supabase Edge Functions `pg_cron`**: schedule a `net.http_post` to the
+  cleanup endpoint every minute.
+- **Any external cron** (GitHub Actions, cron-job.org, etc.) hitting the endpoint.
+
+The cleanup is safe to run repeatedly and is idempotent. For each expired pending
+booking it **verifies the payment with PayRex first** — if the payment actually
+succeeded (late webhook), it marks the booking paid instead of cancelling. If
+PayRex cannot be reached, the slot stays locked and the next run retries. This
+prevents a paid booking from ever being cancelled by a timeout.
+
+---
+
+## Deployment
+
+### Production environment variables
+
+Set all variables from the [Environment variables](#environment-variables) table
+in your hosting provider's environment settings (e.g. Vercel project settings).
+
+### Production checklist
+
+1. **Database** — Apply both SQL migration files to your production Supabase
+   project. Create JESS's auth account and register her UID in `app_config`.
+2. **RLS** — Verify policies are active (Dashboard → Authentication → Policies).
+3. **PayRex** — Use **live** API key + live webhook signing secret. Register the
+   production webhook URL (`https://YOUR-DOMAIN/api/webhooks/payrex`) and
+   subscribe to `payment_intent.succeeded` (and optionally `payment.paid`).
+4. **Webhook URL** — Must be public HTTPS.
+5. **Cleanup cron** — Configure a 1-minute cron hitting
+   `/api/bookings/cleanup` with `Authorization: Bearer <CLEANUP_API_KEY>`.
+6. **Site URL** — `NEXT_PUBLIC_SITE_URL` must be your production HTTPS URL.
+7. **Build** — `npm run build` then deploy. (On Vercel, the build is automatic.)
+
+### Build command
 
 ```bash
-supabase db push           # apply pending PostgreSQL migrations
-bun run db:seed            # upsert catalogue + service areas
-bun run db:reset-bookings  # delete bookings/payments/customers (DESTRUCTIVE)
+npm run build
 ```
-
-### Seeding
-
-`scripts/seed.ts` upserts the service areas and catalogue. Existing bookings,
-customers and the admin allowlist are not touched. It requires the
-server-only service-role key.
-
 
 ---
 
-## 5. PayRex sandbox configuration
+## Business rules reference
 
-1. Sign in to the PayRex merchant dashboard in **test mode**
-   (`https://merchants.payrex.com/`).
-2. Copy your **Test Secret Key** and put it in `.env` as `PAYREX_SECRET_KEY`.
-3. Keep `PAYMENT_MOCK_MODE=false` (or unset) to use PayRex instead of
-   mock checkout.
-4. Restart the dev server: `bun run dev`.
-5. Walk through `/book` — you'll be redirected to a real PayRex hosted
-   checkout page.
+These are enforced in `src/lib/booking.ts` (pure, shared by client & server)
+and re-validated server-side in `src/lib/booking-server.ts`.
 
-### Webhook registration
+### Service combinations (one booking)
 
-PayRex sends server-to-server webhook events when a payment succeeds (or
-fails). The receiver endpoint is:
+- Up to **5 haircuts** alone.
+- **1 haircut + 1 major service**.
+- **1 or 2 major services** alone (no haircut).
 
-```
-POST https://YOUR_PUBLIC_URL/api/webhooks/payrex
-```
+Everything else is rejected. The booking UI disables incompatible selections
+dynamically and explains why.
 
-**Local development steps:**
+### Pricing
 
-1. Expose the local server with an HTTPS tunnel:
+- Haircuts: first person **₱999**, each additional person **+₱500**. Duration
+  1 hour per person.
+- Major services: price & duration depend on the chosen variant (length/option).
+- **Reservation fee**: ₱500 per haircut/person + ₱1,500 per major service.
+- Remaining balance = total price − reservation fee (paid in cash).
+- The reservation fee is **non-refundable**.
 
-   ```bash
-   # option A — ngrok
-   ngrok http 3000
+### Scheduling
 
-   # option B — Cloudflare quick tunnel
-   cloudflared tunnel --url http://localhost:3000
-   ```
+- JESS works **8:00 AM – 6:00 PM** daily (10-hour window).
+- The customer-selected time is JESS's **departure time** from base
+  (Batasan Hills, QC), not her arrival time.
+- Total committed time = service duration + one-way travel time, **rounded up
+  to the next full hour**.
+- Departure times are on **fixed one-hour intervals**.
+- The entire committed block must fit within 8 AM – 6 PM.
+- Only one appointment at a time; multiple per day allowed if non-overlapping.
 
-2. In the PayRex dashboard (test mode), go to **Settings → Webhooks** and
-   add a new webhook with the URL `https://<your-tunnel>.dev/api/webhooks/payrex`.
-3. Subscribe to the following events (current PayRex event names):
-   - `checkout_session.paid`
-   - `payment.succeeded`
-   - `payment.failed`
-4. PayRex will show you a **Signing Secret**. Copy it and put it in `.env`
-   as `PAYREX_WEBHOOK_SECRET`. (Replace `your_webhook_secret_here`.)
-5. Restart the dev server. The webhook handler will now verify the
-   HMAC-SHA256 signature of every incoming event.
+### Travel times (one-way)
 
-> The webhook handler is implemented and safe to call even before the
-> signing secret is configured — it returns `401 Invalid signature` for
-> unsigned requests. Until then, the booking system relies on the
-> success redirect + the **timeout cleaner** to mark bookings paid or
-> cancelled.
+| Area | Travel |
+|------|--------|
+| Metro Manila | 1.5 h |
+| Cavite | 2 h |
+| Laguna | 2 h |
+| Batangas | 3 h |
 
-### Payment timeout
+### Reservation fee
 
-When a customer starts payment, the booking's slot is **temporarily
-reserved** for 10 minutes (`paymentDeadline` column). If no successful
-webhook arrives within 10 minutes, the timeout cleaner checks the actual
-PayRex Checkout Session state:
+- ₱500 per haircut/person
+- ₱1,500 per major service/person
 
-- If PayRex says the session is paid → mark the booking **Paid**.
-- If PayRex says the session is unpaid / expired → mark the booking
-  **Cancelled** with reason `payment_timeout` and release the slot.
-- If PayRex state is uncertain → leave the slot reserved (the timeout
-  cleaner will retry on the next request).
+### Slot lock
 
-The timeout cleaner runs **opportunistically** every time the
-availability endpoint is called, and can also be triggered manually
-from the admin dashboard (the "Run cleanup" button) or by
-`POST /api/admin/cleanup`.
+- 10 minutes during checkout. Verified payment → paid. Unpaid/failed/expired
+  after 10 min → cancelled (`payment_timeout`) and slot released.
 
 ---
 
-## 6. Running locally
+## Testing
+
+Unit tests cover the pure business logic (no database, no network, no mocks of
+external services):
 
 ```bash
-bun run dev      # http://localhost:3000
-bun run lint     # ESLint
-bun run build    # production build
+npm test
 ```
 
-There is no separate backend process — all routes (pages, APIs, webhooks)
-are served by the Next.js dev server on port 3000.
+Tests verify: service combination rules, haircut pricing model, reservation
+fee calculation, duration rounding, scheduling (working-window fit, overlap
+detection, slot availability), and catalogue integrity.
+
+> Live Supabase, PayRex, webhook, and end-to-end payment functionality were
+> **not** tested locally because they require real configured credentials.
+> The app shows clear configuration errors when credentials are absent.
 
 ---
 
-## 7. Deployment
+## Notes & assumptions
 
-The app is a standard Next.js 16 project and deploys to Vercel, Netlify,
-or any Node host without changes.
-
-1. Set the Supabase URL and anon key in the build and runtime environment,
-   and the service-role key in the server runtime environment. Keep the
-   service-role key private and server-only.
-2. Apply pending SQL migrations to the production Supabase project and
-   create/allowlist JESS's Supabase Auth user.
-3. Make sure your public URL is reachable by PayRex's webhook sender.
-4. Register the production webhook URL
-   (`https://yourdomain.com/api/webhooks/payrex`) in the PayRex dashboard
-   and copy the production signing secret into `PAYREX_WEBHOOK_SECRET`.
-
----
-
-## 8. Supabase access model
-
-- The browser uses only the Supabase anon key for Supabase Auth. There is
-  no direct browser access to customer, booking, booking-item or payment
-  records.
-- Admin routes verify the Supabase Auth user on the server and require a
-  matching `public.admin_users.user_id` before using privileged database
-  operations.
-- Service-role database access is confined to server-side modules and
-  scripts. Never expose or use `SUPABASE_SERVICE_ROLE_KEY` in client code.
-- The RLS policies and function grants are installed by the migration.
-  Public catalogue reads are permitted; private booking data and mutation
-  functions are unavailable to `anon` and `authenticated` database roles.
-- PayRex credentials and webhook signature verification remain server-side.
-
----
-
-## 9. Security features
-
-- ✅ All prices are recalculated server-side from the database; the
-  browser never supplies a price or reservation fee.
-- ✅ Booking-combination rules enforced on the client *and* the server.
-- ✅ Slot reservation uses a PostgreSQL exclusion constraint and a
-  transaction-backed booking RPC to prevent overlapping active bookings,
-  including concurrent requests.
-- ✅ Temporary 10-minute payment deadline; expired pending bookings are
-  released atomically.
-- ✅ Webhook signature verification (HMAC-SHA256) — fake webhooks are
-  rejected with 401.
-- ✅ Webhook handler is idempotent (a duplicate `successful` event is a
-  no-op).
-- ✅ Amount verification: the webhook refuses to mark a booking Paid if
-  the paid amount doesn't match the reservation fee.
-- ✅ Admin pages and API endpoints validate the Supabase Auth user and the
-  server-side admin allowlist before accessing protected operations.
-- ✅ Marking a booking **Completed** does NOT release the reserved time
-  block (JESS can't free a slot early by completing).
-- ✅ Cancelling a **Paid** booking is allowed (JESS-initiated) but
-  preserves the payment history.
-- ✅ Cancelling a **Pending** booking that has a successful payment is
-  blocked — the booking is flipped to Paid instead.
-- ✅ Service-role / secret credentials live only in server-side
-  environment variables; nothing secret is exposed to the browser.
-- ✅ `.env*` is in `.gitignore`.
-
----
-
-## 10. Current limitations & unresolved business decisions
-
-1. **PayRex live testing not performed.** The integration is implemented
-   and sandbox-ready, but no real payment was processed during this
-   implementation phase. Use the `.env` `PAYREX_SECRET_KEY` +
-   `PAYREX_WEBHOOK_SECRET` to enable live sandbox testing.
-2. **Mock checkout is development-only.** Production requires
-   `PAYREX_SECRET_KEY`; mock completion also requires an authenticated admin
-   session and is disabled in production.
-3. **Haircut additional-time rule.** The brief notes that the exact
-   additional time for extra haircut customers has not been finalized.
-   The current rule (see `src/lib/pricing.ts → priceHaircutLine`) bills
-   each additional person at ₱500 with **1 hour per person** of duration.
-   This is documented in code and easy to change in one place.
-4. **Hair Color Correction.** The brief specifies the displayed price is
-   ₱5,991 but the final pricing may depend on length/complexity. The
-   catalogue stores ₱5,991 and the service `note` field carries the
-   explanation. The final pricing rule requires confirmation from JESS.
-5. **Toupee Haircut & Hair Blending.** The brief asks to confirm their
-   booking category. They are treated as **haircut units** for the
-   booking-combination rule (so they count toward the 5-haircut cap and
-   the "1 haircut + 1 major" rule). This assumption is documented in
-   `src/lib/catalogue.ts`.
-6. **Address-to-area verification.** The brief explicitly allows a
-   customer-selected area + clear address confirmation rather than
-   automatic geocoding. We follow that — the customer picks the area
-   and types their address; JESS verifies it manually.
-7. **No refund system.** The reservation fee is non-refundable per the
-   salon's stated policy. No refund buttons or endpoints exist.
-8. **Group booking (20–30 people).** Not supported by the system. The
-   booking UI shows a "Planning a group appointment? Please contact
-   JESS directly." hint.
-9. **Webhook event retries.** PayRex retries failed webhook deliveries;
-   our handler is idempotent so retries are safe.
-10. **Production cleanup schedule.** Expired payment locks are cleaned on
-    availability checks and can be released manually from the admin
-    dashboard. A production scheduler may be added later if request-driven
-    cleanup is insufficient.
-
----
-
-## 11. Project structure
-
-```
-supabase/
-  migrations/                               # PostgreSQL schema, RLS and RPC functions
-scripts/
-  seed.ts                                    # catalogue + service areas seed
-src/
-  app/
-    page.tsx                                 # Home
-    services/page.tsx                        # Services
-    about/page.tsx                           # About
-    book/
-      page.tsx                               # 4-step booking flow
-      result/page.tsx                        # success / pending / cancelled
-      mock-checkout/page.tsx                 # simulated PayRex checkout
-    admin/
-      page.tsx                               # session guard
-      login/page.tsx                         # Supabase Auth sign-in
-    api/
-      areas/route.ts
-      services/route.ts
-      availability/route.ts
-      bookings/
-        create/route.ts
-        [ref]/route.ts
-        mock-succeed/route.ts
-        by-session/route.ts
-      webhooks/payrex/route.ts
-      admin/
-        bookings/route.ts
-        bookings/[id]/complete/route.ts
-        bookings/[id]/cancel/route.ts
-        cleanup/route.ts
-  components/
-    site-shell.tsx                           # public header/footer
-    admin-dashboard.tsx                      # admin tabs + actions
-    ui/                                      # shadcn/ui primitives
-  lib/
-    auth.ts                                  # Supabase Auth + admin allowlist check
-    booking-rules.ts                         # combination rules (pure logic)
-    catalogue.ts                             # seed data (server-only)
-    db.ts                                    # server-only Supabase service client
-    supabase/                                # browser/server Auth clients
-  proxy.ts                                   # refreshes Supabase Auth cookies
-    payrex.ts                                # PayRex client + webhook verify
-    pricing.ts                               # server-authoritative pricing
-    scheduling.ts                            # availability + timeout cleanup
-    types.ts                                 # client-safe DTOs + formatters
-```
-
----
-
-## 12. Final notes
-
-- **Existing website preserved.** The homepage, services page, and
-  visual identity are unchanged from the original React+Vite site. The
-  original Contact page content was reorganised into the About page,
-  and a dedicated Book page replaces the old manual Messenger+GCash
-  flow.
-- **Mobile-first.** Every page is touch-friendly. The booking flow
-  works on phones, tablets, and desktops.
-- **Admin is private.** There is no public link to `/admin`. JESS
-  navigates there directly.
-- **No overengineering.** No queues, no message bus, no microservices.
-  One Next.js app, one Supabase project, one PayRex integration.
-
-— Built for JESS.
+- **Framework migration:** the original Vite SPA was migrated to Next.js 16
+  (App Router) because server-side API routes are required for booking creation,
+  PayRex verification, webhooks, and admin authorization. All original design,
+  content, images, fonts, and the service catalogue are preserved.
+- **Service classification:** every service outside the "Haircuts" category is
+  treated as a **major service** (including Toupee styling, Massage and Modern
+  Ventosa, which live in their own categories with their own pricing).
+- **Haircut pricing** uses the existing site's model: ₱999 for the first person,
+  +₱500 for each additional person (a volume discount), 1 hour per person.
+- **No customer accounts:** customers book as guests. Only JESS authenticates.
+- **No refund system:** the reservation fee is non-refundable; the app does not
+  implement refunds.
+- **Cancelled bookings** remain in the database for history; they do not appear
+  in the three main dashboard tabs.
+- The service catalogue is kept in code (`src/lib/catalogue.ts`), not in the
+  database, since no new services are being added.
