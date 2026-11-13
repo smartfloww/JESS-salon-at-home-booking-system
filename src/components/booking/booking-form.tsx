@@ -15,6 +15,7 @@ import {
   calculateDuration,
   calculatePricing,
   formatCurrency,
+  getManilaDateTime,
   getServiceArea,
   serviceHours,
   validateCombination,
@@ -628,7 +629,7 @@ function StepSchedule(props: {
   error: string; departureHour: number | null; onPick: (h: number) => void;
   areaLabel?: string; travelHours: number;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getManilaDateTime().date;
   return (
     <div className="book-card">
       <h2 className="book-section-title">Pick a date &amp; time</h2>

@@ -165,15 +165,28 @@ export function majorTotal(selections: MajorSelection[]): number {
   }, 0);
 }
 
+function majorReservationFee(selections: MajorSelection[]): number {
+  return selections.reduce((sum, sel) => {
+    const service = findMajorService(sel.serviceId);
+    if (!service) return sum;
+    const variant = findVariant(service, sel.variantId);
+    if (!variant) return sum;
+    const fee =
+      variant.price < RESERVATION_FEE_MAJOR
+        ? RESERVATION_FEE_HAIRCUT
+        : RESERVATION_FEE_MAJOR;
+    return sum + fee;
+  }, 0);
+}
+
 export function calculatePricing(selection: BookingSelection): PriceBreakdown {
   const haircutQty = selection.haircutQuantity;
-  const majorCount = selection.majorSelections.length;
 
   const haircutSub = haircutTotal(haircutQty);
   const majorSub = majorTotal(selection.majorSelections);
   const totalPrice = haircutSub + majorSub;
   const reservationFee =
-    RESERVATION_FEE_HAIRCUT * haircutQty + RESERVATION_FEE_MAJOR * majorCount;
+    RESERVATION_FEE_HAIRCUT * haircutQty + majorReservationFee(selection.majorSelections);
   const remainingBalance = Math.max(0, totalPrice - reservationFee);
 
   return {
@@ -247,9 +260,8 @@ export function getDepartureSlots(
   const latestDepartureMin = WORKING_END_MIN - committedMin;
 
   const slots: DepartureSlot[] = [];
-  const todayISO = toISODate(now);
+  const { date: todayISO, minutes: nowMin } = getManilaDateTime(now);
   const isToday = dateISO === todayISO;
-  const nowMin = now.getHours() * MIN_PER_HOUR + now.getMinutes();
 
   for (let dep = WORKING_START_MIN; dep <= latestDepartureMin; dep += MIN_PER_HOUR) {
     const block: TimeBlock = { startMin: dep, endMin: dep + committedMin };
@@ -326,6 +338,30 @@ export function toISODate(d: Date): string {
   const m = (d.getMonth() + 1).toString().padStart(2, '0');
   const day = d.getDate().toString().padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/** Get the current date and time in the salon's local timezone. */
+export function getManilaDateTime(now: Date = new Date()): { date: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => {
+    const value = parts.find((item) => item.type === type)?.value;
+    if (!value) throw new Error(`Missing ${type} in Manila date/time.`);
+    return value;
+  };
+  const hour = Number(part('hour'));
+  const minute = Number(part('minute'));
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    minutes: hour * MIN_PER_HOUR + minute,
+  };
 }
 
 /** Parse a YYYY-MM-DD string into a local Date at midnight. */

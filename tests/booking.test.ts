@@ -18,6 +18,7 @@ import {
   calculateDuration,
   roundUpToHour,
   getDepartureSlots,
+  getManilaDateTime,
   buildBlock,
   blocksOverlap,
   formatCurrency,
@@ -91,12 +92,23 @@ test('pricing: haircut total uses first-person + additional model', () => {
   assert.equal(haircutTotal(0), 0);
 });
 
-test('pricing: reservation fee = 500 per haircut + 1500 per major', () => {
+test('pricing: haircuts reserve 500 per person', () => {
   const s = sel(3, []); // 3 haircuts
   const p = calculatePricing(s);
   assert.equal(p.reservationFee, 1500); // 3 * 500
   assert.equal(p.totalPrice, 1999);
   assert.equal(p.remainingBalance, 1999 - 1500);
+});
+
+test('pricing: major services below 1500 reserve 500 each', () => {
+  const s = sel(0, [
+    ['hair-blending', 'standard'],
+    ['hair-blending', 'standard'],
+  ]);
+  const p = calculatePricing(s);
+  assert.equal(p.majorTotal, 2000);
+  assert.equal(p.reservationFee, 1000);
+  assert.equal(p.remainingBalance, 1000);
 });
 
 test('pricing: 1 haircut + 1 major service', () => {
@@ -222,6 +234,20 @@ test('scheduling: slots fit within 8-18 working window', () => {
   assert.ok(hours.every((h) => h >= 8 && h <= 15));
   // all available when no existing bookings
   assert.ok(slots.every((s) => s.available));
+});
+
+test('scheduling: Manila time determines today and past departure slots', () => {
+  const now = new Date('2026-01-01T01:30:00.000Z'); // 9:30 AM in Manila
+  assert.deepEqual(getManilaDateTime(now), { date: '2026-01-01', minutes: 570 });
+
+  const slots = getDepartureSlots(1, 0, '2026-01-01', [], now);
+  assert.equal(slots.find((slot) => slot.hour === 9)?.available, false);
+  assert.equal(slots.find((slot) => slot.hour === 10)?.available, true);
+});
+
+test('scheduling: Manila date can differ from the UTC date', () => {
+  const now = new Date('2026-01-01T16:30:00.000Z');
+  assert.deepEqual(getManilaDateTime(now), { date: '2026-01-02', minutes: 30 });
 });
 
 test('scheduling: a 7h committed block must fit (latest dep 11)', () => {

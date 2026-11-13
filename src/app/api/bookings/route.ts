@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { createBooking } from '@/lib/booking-server';
 import { createCheckoutSession } from '@/lib/payrex';
 import { isPayrexConfigured, getConfig, isSupabaseConfigured } from '@/lib/env';
-import { calculateDuration, calculatePricing, formatCurrency } from '@/lib/booking';
+import {
+  calculateDuration,
+  calculatePricing,
+  formatCurrency,
+  getManilaDateTime,
+} from '@/lib/booking';
 import type { BookingSelection } from '@/lib/booking';
 
 /**
@@ -76,16 +81,30 @@ export async function POST(request: Request) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(body.appointmentDate)) {
     return NextResponse.json({ error: 'Invalid appointment date.' }, { status: 400 });
   }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const appt = new Date(body.appointmentDate + 'T00:00:00');
-  if (appt < today) {
+  const appt = new Date(`${body.appointmentDate}T00:00:00.000Z`);
+  if (
+    Number.isNaN(appt.getTime()) ||
+    appt.toISOString().slice(0, 10) !== body.appointmentDate
+  ) {
+    return NextResponse.json({ error: 'Invalid appointment date.' }, { status: 400 });
+  }
+  const manilaNow = getManilaDateTime();
+  if (body.appointmentDate < manilaNow.date) {
     return NextResponse.json({ error: 'Appointment date cannot be in the past.' }, { status: 400 });
   }
 
   const departureHour = Number(body.departureHour);
   if (!Number.isInteger(departureHour) || departureHour < 8 || departureHour > 18) {
     return NextResponse.json({ error: 'Invalid departure time.' }, { status: 400 });
+  }
+  if (
+    body.appointmentDate === manilaNow.date &&
+    departureHour * 60 <= manilaNow.minutes
+  ) {
+    return NextResponse.json(
+      { error: 'Please choose a departure time that has not passed in Manila time.' },
+      { status: 422 },
+    );
   }
 
   // Create the pending booking (server re-validates everything).

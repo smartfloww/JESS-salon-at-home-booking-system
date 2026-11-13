@@ -90,7 +90,7 @@ export default function AboutPage() {
               </p>
               <p>
                 <strong>Major service bookings:</strong> {''}
-                ₱1,500 reservation fee per service
+                ₱500 per service under ₱1,500; ₱1,500 per service at ₱1,500 or more
               </p>
             </div>
             <p className="reservation-policy">
