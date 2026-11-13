@@ -28,6 +28,10 @@ import {
   type TimeBlock,
 } from '../src/lib/booking';
 import { findMajorService, findVariant, SERVICE_AREAS } from '../src/lib/catalogue';
+import {
+  getDashboardDateRange,
+  summarizeDashboardBookings,
+} from '../src/lib/admin-dashboard';
 
 function sel(haircutQuantity: number, majorIds: [string, string][]): BookingSelection {
   return {
@@ -289,6 +293,54 @@ test('formatTime formats 12-hour', () => {
 test('toISODate produces local YYYY-MM-DD', () => {
   const d = new Date(2026, 0, 5); // Jan 5 2026 local
   assert.equal(toISODate(d), '2026-01-05');
+});
+
+test('dashboard date ranges use Manila dates and start weeks on Monday', () => {
+  const now = new Date('2026-01-04T16:30:00.000Z'); // Monday Jan 5 in Manila
+  assert.deepEqual(getDashboardDateRange('today', now), {
+    startDate: '2026-01-05',
+    endDate: '2026-01-05',
+    dates: ['2026-01-05'],
+  });
+  assert.deepEqual(getDashboardDateRange('week', now), {
+    startDate: '2026-01-05',
+    endDate: '2026-01-11',
+    dates: [
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+      '2026-01-08',
+      '2026-01-09',
+      '2026-01-10',
+      '2026-01-11',
+    ],
+  });
+});
+
+test('dashboard month range includes the full Manila calendar month', () => {
+  const now = new Date('2026-02-28T16:30:00.000Z');
+  const range = getDashboardDateRange('month', now);
+  assert.equal(range.startDate, '2026-03-01');
+  assert.equal(range.endDate, '2026-03-31');
+  assert.equal(range.dates.length, 31);
+});
+
+test('dashboard counts active bookings and full-price revenue only when completed', () => {
+  const range = getDashboardDateRange('week', new Date('2026-01-04T16:30:00.000Z'));
+  const stats = summarizeDashboardBookings([
+    { appointment_date: '2026-01-05', status: 'pending', total_price: 1500 },
+    { appointment_date: '2026-01-06', status: 'paid', total_price: 2500 },
+    { appointment_date: '2026-01-07', status: 'completed', total_price: 3499 },
+    { appointment_date: '2026-01-08', status: 'cancelled', total_price: 5000 },
+    { appointment_date: '2026-01-12', status: 'completed', total_price: 6000 },
+  ], range);
+
+  assert.equal(stats.bookingCount, 3);
+  assert.equal(stats.pendingCount, 1);
+  assert.equal(stats.paidCount, 1);
+  assert.equal(stats.completedCount, 1);
+  assert.equal(stats.revenue, 3499);
+  assert.equal(stats.daily.find((day) => day.date === '2026-01-07')?.revenue, 3499);
 });
 
 /* ------------------------------------------------------------------ */

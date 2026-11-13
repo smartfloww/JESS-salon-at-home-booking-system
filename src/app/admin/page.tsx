@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { BarChart3, CalendarDays, ClipboardList, Coins } from 'lucide-react';
 import { formatCurrency, formatDateLong, formatTime } from '@/lib/booking';
+import type { AdminDashboardStats, DashboardPeriod } from '@/lib/admin-dashboard';
 import '@/components/booking/booking.css';
 
 type TabStatus = 'pending' | 'paid' | 'completed';
@@ -50,6 +52,7 @@ interface Booking {
 
 export default function AdminDashboard() {
   const router = useRouter();
+  const [section, setSection] = useState<'bookings' | 'revenue'>('bookings');
   const [tab, setTab] = useState<TabStatus>('paid');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -66,6 +69,7 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
+    if (section !== 'bookings') return;
     let cancelled = false;
     setLoading(true);
     setError('');
@@ -95,7 +99,7 @@ export default function AdminDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [tab, router]);
+  }, [section, tab, router]);
 
   // Load counts for all tabs (lightweight).
   useEffect(() => {
@@ -183,51 +187,80 @@ export default function AdminDashboard() {
       </header>
 
       <main className="admin-main">
-        <h1 style={{ font: '500 30px "Playfair Display",serif', margin: '0 0 6px' }}>Bookings</h1>
-        <p style={{ color: '#7c6f60', fontSize: 13, margin: '0 0 24px' }}>
-          Manage your appointments. Default view shows Paid upcoming appointments.
+        <h1 className="admin-page-title">{section === 'bookings' ? 'Bookings' : 'Revenue'}</h1>
+        <p className="admin-page-intro">
+          {section === 'bookings'
+            ? 'Manage your appointments. Default view shows Paid upcoming appointments.'
+            : 'A clear view of bookings and full service earnings.'}
         </p>
 
-        {configError && <div className="admin-config-err">{configError}</div>}
-        {error && !configError && <div className="admin-config-err">{error}</div>}
-
-        <div className="admin-tabs">
-          <button className={`admin-tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
-            Pending {counts.pending !== undefined && <span className="count">{counts.pending}</span>}
+        <div className="admin-section-tabs" role="tablist" aria-label="Admin sections">
+          <button
+            className={`admin-section-tab ${section === 'bookings' ? 'active' : ''}`}
+            onClick={() => setSection('bookings')}
+            role="tab"
+            aria-selected={section === 'bookings'}
+          >
+            <ClipboardList size={17} aria-hidden="true" />
+            Bookings
           </button>
-          <button className={`admin-tab ${tab === 'paid' ? 'active' : ''}`} onClick={() => setTab('paid')}>
-            Paid {counts.paid !== undefined && <span className="count">{counts.paid}</span>}
-          </button>
-          <button className={`admin-tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
-            Completed {counts.completed !== undefined && <span className="count">{counts.completed}</span>}
+          <button
+            className={`admin-section-tab ${section === 'revenue' ? 'active' : ''}`}
+            onClick={() => setSection('revenue')}
+            role="tab"
+            aria-selected={section === 'revenue'}
+          >
+            <BarChart3 size={17} aria-hidden="true" />
+            Revenue
           </button>
         </div>
 
-        {tab === 'pending' && (
-          <p className="slot-note" style={{ marginBottom: 16 }}>
-            Bookings awaiting payment verification. JESS cannot manually mark these as Paid —
-            payment is confirmed only through PayRex.
-          </p>
-        )}
+        {section === 'bookings' ? (
+          <>
+            {configError && <div className="admin-config-err">{configError}</div>}
+            {error && !configError && <div className="admin-config-err">{error}</div>}
 
-        {loading ? (
-          <div className="admin-loading">Loading bookings…</div>
-        ) : bookings.length === 0 ? (
-          <div className="admin-empty">No {tab} bookings.</div>
+            <div className="admin-tabs">
+              <button className={`admin-tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
+                Pending {counts.pending !== undefined && <span className="count">{counts.pending}</span>}
+              </button>
+              <button className={`admin-tab ${tab === 'paid' ? 'active' : ''}`} onClick={() => setTab('paid')}>
+                Paid {counts.paid !== undefined && <span className="count">{counts.paid}</span>}
+              </button>
+              <button className={`admin-tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
+                Completed {counts.completed !== undefined && <span className="count">{counts.completed}</span>}
+              </button>
+            </div>
+
+            {tab === 'pending' && (
+              <p className="slot-note" style={{ marginBottom: 16 }}>
+                Bookings awaiting payment verification. JESS cannot manually mark these as Paid —
+                payment is confirmed only through PayRex.
+              </p>
+            )}
+
+            {loading ? (
+              <div className="admin-loading">Loading bookings…</div>
+            ) : bookings.length === 0 ? (
+              <div className="admin-empty">No {tab} bookings.</div>
+            ) : (
+              bookings.map((b) => (
+                <BookingCard
+                  key={b.id}
+                  b={b}
+                  tab={tab}
+                  onComplete={() => doComplete(b)}
+                  onCancel={() => {
+                    setConfirmAction({ booking: b, type: 'cancel' });
+                    setCancelNote('');
+                  }}
+                  actionLoading={actionLoading === b.id}
+                />
+              ))
+            )}
+          </>
         ) : (
-          bookings.map((b) => (
-            <BookingCard
-              key={b.id}
-              b={b}
-              tab={tab}
-              onComplete={() => doComplete(b)}
-              onCancel={() => {
-                setConfirmAction({ booking: b, type: 'cancel' });
-                setCancelNote('');
-              }}
-              actionLoading={actionLoading === b.id}
-            />
-          ))
+          <RevenueDashboard />
         )}
       </main>
 
@@ -246,6 +279,166 @@ export default function AdminDashboard() {
       )}
     </div>
   );
+}
+
+function RevenueDashboard() {
+  const router = useRouter();
+  const [period, setPeriod] = useState<DashboardPeriod>('today');
+  const [stats, setStats] = useState<AdminDashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+
+    fetch(`/api/admin/revenue?period=${period}`)
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (response.status === 401) {
+          router.replace('/admin/login?next=/admin');
+          return;
+        }
+        if (!response.ok) {
+          setError(data.error || 'Failed to load revenue data.');
+          setStats(null);
+          return;
+        }
+        setStats(data.stats);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Network error while loading revenue data.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [period, router]);
+
+  const periodLabels: Record<DashboardPeriod, string> = {
+    today: 'Today',
+    week: 'This week',
+    month: 'This month',
+  };
+  const maxRevenue = stats
+    ? Math.max(...stats.daily.map((day) => day.revenue), 0)
+    : 0;
+
+  return (
+    <section className="admin-revenue" aria-label="Revenue dashboard">
+      <div className="revenue-toolbar">
+        <div>
+          <h2>Performance overview</h2>
+          <p>Bookings are grouped by appointment date.</p>
+        </div>
+        <div className="revenue-periods" role="group" aria-label="Choose a reporting period">
+          {(['today', 'week', 'month'] as const).map((value) => (
+            <button
+              key={value}
+              className={period === value ? 'active' : ''}
+              onClick={() => setPeriod(value)}
+              aria-pressed={period === value}
+            >
+              {periodLabels[value]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && <div className="admin-config-err">{error}</div>}
+      {loading ? (
+        <div className="admin-loading">Loading revenue data…</div>
+      ) : stats ? (
+        <>
+          <div className="revenue-date-range">
+            <CalendarDays size={15} aria-hidden="true" />
+            {stats.startDate === stats.endDate
+              ? formatDateLong(stats.startDate)
+              : `${formatDateLong(stats.startDate)} – ${formatDateLong(stats.endDate)}`}
+          </div>
+          <div className="revenue-metrics">
+            <article className="revenue-metric revenue-metric-primary">
+              <div className="revenue-metric-label"><Coins size={16} aria-hidden="true" /> Full-service revenue</div>
+              <strong>{formatCurrency(stats.revenue)}</strong>
+              <p>Full service fees for completed appointments</p>
+            </article>
+            <article className="revenue-metric">
+              <div className="revenue-metric-label"><ClipboardList size={16} aria-hidden="true" /> Bookings</div>
+              <strong>{stats.bookingCount}</strong>
+              <p>Non-cancelled appointments in this period</p>
+            </article>
+            <article className="revenue-metric">
+              <div className="revenue-metric-label"><CalendarDays size={16} aria-hidden="true" /> Completed</div>
+              <strong>{stats.completedCount}</strong>
+              <p>Completed appointments</p>
+            </article>
+          </div>
+
+          <div className="revenue-detail-grid">
+            <section className="revenue-panel">
+              <div className="revenue-panel-heading">
+                <div>
+                  <h3>Revenue trend</h3>
+                  <p>Full service price by appointment date</p>
+                </div>
+                <span>{periodLabels[period]}</span>
+              </div>
+              {stats.revenue === 0 ? (
+                <div className="revenue-chart-empty">No completed revenue in this period yet.</div>
+              ) : (
+                <div className="revenue-chart" aria-label="Daily revenue chart">
+                  {stats.daily.map((day) => {
+                    const barHeight = day.revenue > 0
+                      ? Math.max(6, Math.round((day.revenue / maxRevenue) * 100))
+                      : 2;
+                    return (
+                      <div className="revenue-chart-day" key={day.date}>
+                        <div className="revenue-chart-value">
+                          {day.revenue > 0 ? formatCurrency(day.revenue) : ''}
+                        </div>
+                        <div
+                          className={`revenue-chart-bar ${day.revenue > 0 ? 'has-revenue' : ''}`}
+                          style={{ height: `${barHeight}%` }}
+                          title={`${formatDateLong(day.date)}: ${formatCurrency(day.revenue)}, ${day.bookingCount} booking${day.bookingCount === 1 ? '' : 's'}`}
+                        />
+                        <span>{formatChartDate(day.date, period)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <section className="revenue-panel revenue-breakdown">
+              <div className="revenue-panel-heading">
+                <div>
+                  <h3>Booking status</h3>
+                  <p>Appointments in this period</p>
+                </div>
+              </div>
+              <div className="revenue-status-row"><span><i className="status-dot pending" /> Pending</span><strong>{stats.pendingCount}</strong></div>
+              <div className="revenue-status-row"><span><i className="status-dot paid" /> Paid</span><strong>{stats.paidCount}</strong></div>
+              <div className="revenue-status-row"><span><i className="status-dot completed" /> Completed</span><strong>{stats.completedCount}</strong></div>
+              <p className="revenue-note">Revenue excludes pending payments and cancelled bookings. Full service fees are counted when an appointment is completed.</p>
+            </section>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function formatChartDate(isoDate: string, period: DashboardPeriod): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  const options: Intl.DateTimeFormatOptions = period === 'month'
+    ? { day: 'numeric', timeZone: 'Asia/Manila' }
+    : { weekday: 'short', day: 'numeric', timeZone: 'Asia/Manila' };
+  return new Intl.DateTimeFormat('en-PH', options).format(date);
 }
 
 function BookingCard({

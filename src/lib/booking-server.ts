@@ -47,6 +47,12 @@ import {
 } from '@/lib/booking';
 import { SLOT_LOCK_MINUTES } from '@/lib/catalogue';
 import { findMajorService, findVariant } from '@/lib/catalogue';
+import {
+  getDashboardDateRange,
+  summarizeDashboardBookings,
+  type AdminDashboardStats,
+  type DashboardPeriod,
+} from '@/lib/admin-dashboard';
 
 /* ------------------------------------------------------------------ */
 /* DB row type                                                         */
@@ -497,6 +503,27 @@ export async function listBookings(status: string): Promise<BookingRow[]> {
     .order('departure_hour', { ascending: true });
   if (error) throw error;
   return (data ?? []) as unknown as BookingRow[];
+}
+
+/** Aggregate admin dashboard totals for a date range. */
+export async function getAdminDashboardStats(
+  period: DashboardPeriod,
+): Promise<AdminDashboardStats> {
+  await requireAdmin();
+  if (!isSupabaseConfigured()) throw new Error('Database not configured.');
+
+  const range = getDashboardDateRange(period);
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('appointment_date, status, total_price')
+    .gte('appointment_date', range.startDate)
+    .lte('appointment_date', range.endDate)
+    .in('status', ['pending', 'paid', 'completed']);
+
+  if (error) throw error;
+
+  return summarizeDashboardBookings(data ?? [], range);
 }
 
 /** Mark a Paid booking as Completed (does NOT release the block). */
